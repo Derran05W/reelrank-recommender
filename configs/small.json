@@ -1,0 +1,50 @@
+{
+  "simulation": {
+    "seed": 42,
+    "users": 1000,
+    "reels": 10000,
+    "creators": 500,
+    "topics": 32,
+    "dimensions": 64,
+    "interactions_per_user": 50
+  },
+  "recommendation": {
+    "feed_size": 10,
+    "vector_candidates": 200,
+    "popular_candidates": 100,
+    "fresh_candidates": 100,
+    "exploration_candidates": 50
+  },
+  "hnsw": {
+    "m": 16,
+    "ef_construction": 200,
+    "ef_search": 64
+  },
+  "ranking": {
+    "similarity_weight": 0.50,
+    "quality_weight": 0.10,
+    "freshness_weight": 0.08,
+    "popularity_weight": 0.07,
+    "trending_weight": 0.08,
+    "creator_affinity_weight": 0.07,
+    "exploration_weight": 0.05,
+    "repetition_penalty": 0.15
+  },
+  "learning": {
+    "long_term_rate": 0.02,
+    "session_rate": 0.15,
+    "recent_window": 20,
+    "long_term_weight": 0.65,
+    "session_weight": 0.35
+  },
+  "exploration": {
+    "enabled": true,
+    "epsilon": 0.05
+  },
+  "diversity": {
+    "enabled": true,
+    "max_per_creator": 2,
+    "max_per_topic": 3,
+    "mmr_lambda": 0.75
+  }
+}

@@ -1,0 +1,9 @@
+build/
+build-*/
+results/*
+!results/published/
+!results/published/**
+.cache/
+__pycache__/
+.venv/
+.DS_Store
