@@ -21,11 +21,15 @@ std::vector<Candidate> WeightedRanker::rank(const User &user,
         const FeatureVector &f = features[i];
 
         // TDD 14.2 weighted contributions. Penalties (repetition, impression fatigue) are stored
-        // as NEGATIVE values so the map sums to the score directly. All ten FROZEN snake_case keys
-        // are ALWAYS present. Computed in double, then stored as float; rankingScore is the sum of
-        // the stored float contributions, so the map's values sum to rankingScore to within one
-        // float rounding (property-tested).
+        // as NEGATIVE values so the map sums to the score directly. All ELEVEN FROZEN snake_case
+        // keys are ALWAYS present. Computed in double, then stored as float; rankingScore is the
+        // sum of the stored float contributions, so the map's values sum to rankingScore to within
+        // one float rounding (property-tested).
         const float similarity = static_cast<float>(config_.similarityWeight * f.similarity);
+        // session_topic (TDD 14.1): positive contribution, active from Phase 7 as session vectors
+        // update online. session_topic_weight == 0 => zero contribution and Phase 6-identical
+        // order.
+        const float sessionTopic = static_cast<float>(config_.sessionTopicWeight * f.sessionTopic);
         const float quality = static_cast<float>(config_.qualityWeight * f.quality);
         const float freshness = static_cast<float>(config_.freshnessWeight * f.freshness);
         const float popularity = static_cast<float>(config_.popularityWeight * f.popularity);
@@ -40,14 +44,15 @@ std::vector<Candidate> WeightedRanker::rank(const User &user,
         const float impressionPenalty =
             static_cast<float>(-config_.impressionPenaltyWeight * f.impressionCount);
 
-        const double sum = static_cast<double>(similarity) + quality + freshness + popularity +
-                           trending + creatorAffinity + exploration + durationMatch +
+        const double sum = static_cast<double>(similarity) + sessionTopic + quality + freshness +
+                           popularity + trending + creatorAffinity + exploration + durationMatch +
                            repetitionPenalty + impressionPenalty;
 
         Candidate &c = ranked[i];
         c.rankingScore = static_cast<float>(sum);
         c.featureContributions = {
             {"similarity", similarity},
+            {"session_topic", sessionTopic},
             {"quality", quality},
             {"freshness", freshness},
             {"popularity", popularity},

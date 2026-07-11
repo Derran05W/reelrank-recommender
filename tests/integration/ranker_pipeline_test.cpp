@@ -28,12 +28,13 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// The ten contribution keys the WeightedRanker must emit on every ranked candidate (frozen in
-// weighted_ranker.hpp; penalties are stored as negative values).
+// The eleven contribution keys the WeightedRanker must emit on every ranked candidate (frozen in
+// weighted_ranker.hpp; penalties are stored as negative values). "session_topic" joined in
+// Phase 7 with the session-topic-similarity feature.
 const char *const kContributionKeys[] = {
-    "similarity",         "quality",           "freshness",   "popularity",
-    "trending",           "creator_affinity",  "exploration", "duration_match",
-    "repetition_penalty", "impression_penalty"};
+    "similarity",       "quality",     "freshness",      "popularity",         "trending",
+    "creator_affinity", "exploration", "duration_match", "repetition_penalty", "impression_penalty",
+    "session_topic"};
 
 std::string readFile(const fs::path &p) {
     std::ifstream f(p, std::ios::binary);
@@ -116,7 +117,7 @@ TEST(RankerPipelineTest, EndToEndFeedWellFormedWithExplanations) {
             EXPECT_LE(item.score, prevScore);
             prevScore = item.score;
 
-            // Explanation completeness + additivity: all ten keys, sum == score.
+            // Explanation completeness + additivity: all eleven keys, sum == score.
             EXPECT_EQ(item.featureContributions.size(), std::size(kContributionKeys));
             float sum = 0.0f;
             for (const char *key : kContributionKeys) {

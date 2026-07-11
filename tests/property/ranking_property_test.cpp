@@ -55,7 +55,11 @@ Fixture makeFixture(rr::Rng &rng) {
         r.id = rr::ReelId{static_cast<uint32_t>(i)};
         r.creatorId = rr::CreatorId{static_cast<uint32_t>(rng.uniformInt(creators))};
         r.primaryTopic = rr::TopicId{static_cast<uint32_t>(rng.uniformInt(topics))};
-        r.embedding = {1.0f, 0.0f};
+        // Random 2-D unit embedding (angle) so session_topic varies per candidate and the real
+        // rr::dot path is exercised, not just the neutral fallback.
+        const double reelTheta = rng.uniform(0.0, 6.283185307179586);
+        r.embedding = {static_cast<float>(std::cos(reelTheta)),
+                       static_cast<float>(std::sin(reelTheta))};
         r.intrinsicQuality = static_cast<float>(rng.uniform01());
         r.durationSeconds = static_cast<float>(rng.uniform(5.0, 120.0));
         r.createdAt = rng.uniformInt(2'000'000);
@@ -71,6 +75,11 @@ Fixture makeFixture(rr::Rng &rng) {
         }
         fx.reels.push_back(std::move(r));
     }
+
+    // Random 2-D unit session preference (angle) so the session_topic feature is non-degenerate.
+    const double sessionTheta = rng.uniform(0.0, 6.283185307179586);
+    fx.user.sessionPreference = {static_cast<float>(std::cos(sessionTheta)),
+                                 static_cast<float>(std::sin(sessionTheta))};
 
     for (uint32_t cr = 0; cr < creators; ++cr) {
         if (rng.bernoulli(0.5)) {
@@ -138,7 +147,7 @@ TEST(RankingPropertyTest, MonotoneSumAndPermutation) {
             }
             // (b) contributions sum to the score.
             const auto &m = ranked[i].featureContributions;
-            EXPECT_EQ(m.size(), 10u) << "seed " << seed;
+            EXPECT_EQ(m.size(), 11u) << "seed " << seed;
             double sum = 0.0;
             for (const auto &[key, value] : m) {
                 sum += value;

@@ -70,6 +70,33 @@ TEST(FeatureExtractorTest, SimilarityAffineMap) {
     EXPECT_FLOAT_EQ(extractOne(reels, user, cand(0, 0.0f), 0).similarity, 0.5f);
 }
 
+TEST(FeatureExtractorTest, SessionTopicAffineMap) {
+    // sessionTopic = (cos(sessionPreference, embedding) + 1) / 2, IDENTICAL to the similarity map.
+    // makeReel's embedding is {1, 0}, so the cosine is just sessionPreference[0].
+    std::vector<rr::Reel> reels{makeReel(0)};
+    rr::User user{};
+
+    user.sessionPreference = {1.0f, 0.0f}; // cos 1 -> 1.0
+    EXPECT_FLOAT_EQ(extractOne(reels, user, cand(0), 0).sessionTopic, 1.0f);
+
+    user.sessionPreference = {0.0f, 1.0f}; // cos 0 (orthogonal) -> 0.5
+    EXPECT_FLOAT_EQ(extractOne(reels, user, cand(0), 0).sessionTopic, 0.5f);
+
+    user.sessionPreference = {-1.0f, 0.0f}; // cos -1 -> 0.0
+    EXPECT_FLOAT_EQ(extractOne(reels, user, cand(0), 0).sessionTopic, 0.0f);
+
+    user.sessionPreference = {0.6f, 0.8f}; // cos 0.6 -> (0.6+1)/2 = 0.8
+    EXPECT_FLOAT_EQ(extractOne(reels, user, cand(0), 0).sessionTopic, 0.8f);
+}
+
+TEST(FeatureExtractorTest, SessionTopicNeutralWithoutSessionVector) {
+    // A user that bypassed cold start has an empty session vector; the defensive fallback is the
+    // neutral 0.5 (no rr::dot throw on the hot path).
+    std::vector<rr::Reel> reels{makeReel(0)};
+    rr::User user{}; // sessionPreference empty
+    EXPECT_FLOAT_EQ(extractOne(reels, user, cand(0), 0).sessionTopic, 0.5f);
+}
+
 TEST(FeatureExtractorTest, QualityUsedAsIs) {
     std::vector<rr::Reel> reels{makeReel(0)};
     reels[0].intrinsicQuality = 0.42f;
@@ -250,6 +277,7 @@ TEST(FeatureExtractorTest, Deterministic) {
     reels[0].trendingEngagement = 2.0;
     reels[0].trendingImpressions = 1.0;
     rr::User user{};
+    user.sessionPreference = {0.8f, 0.6f};
     user.creatorAffinity[rr::CreatorId{5}] = 0.3f;
     user.recentInteractions.push_back(event(1, 5, rr::InteractionType::CompleteWatch));
     user.recentInteractions.push_back(event(2, 9, rr::InteractionType::Like));
@@ -261,6 +289,7 @@ TEST(FeatureExtractorTest, Deterministic) {
     ASSERT_EQ(a.size(), b.size());
     for (std::size_t i = 0; i < a.size(); ++i) {
         EXPECT_FLOAT_EQ(a[i].similarity, b[i].similarity);
+        EXPECT_FLOAT_EQ(a[i].sessionTopic, b[i].sessionTopic);
         EXPECT_FLOAT_EQ(a[i].quality, b[i].quality);
         EXPECT_FLOAT_EQ(a[i].freshness, b[i].freshness);
         EXPECT_FLOAT_EQ(a[i].popularity, b[i].popularity);

@@ -4,12 +4,17 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
+
+#include "rr/core/embedding.hpp"
+#include "rr/evaluation/cold_start.hpp"
+#include "rr/simulation/dataset_generator.hpp"
 
 using namespace rr;
 
@@ -68,6 +73,27 @@ std::vector<std::vector<std::string>> readCsvRows(const fs::path &p) {
         }
     }
     return rows;
+}
+
+// The (unparsed) header line of a CSV file.
+std::string readCsvHeader(const fs::path &p) {
+    std::ifstream f(p);
+    std::string line;
+    std::getline(f, line);
+    return line;
+}
+
+// The independently-computed cold-start estimate<->hidden alignment for a config: mean over all
+// users of cos(prior, hiddenPreference) where prior is the global-average hidden preference. This
+// is exactly what the frozen arm should report every round (estimates never move off the prior).
+double coldStartAlignment(const ExperimentConfig &c) {
+    GeneratedDataset ds = generateDataset(c.simulation, c.simulation.seed);
+    const Embedding prior = globalAveragePreference(ds.hiddenStates);
+    double sum = 0.0;
+    for (const HiddenUserState &h : ds.hiddenStates) {
+        sum += dot(prior, h.hiddenPreference);
+    }
+    return ds.hiddenStates.empty() ? 0.0 : sum / static_cast<double>(ds.hiddenStates.size());
 }
 
 } // namespace
@@ -235,4 +261,122 @@ TEST(ExperimentRunnerTest, RetrievalMetricsDeterministicForVectorAlgorithm) {
     EXPECT_EQ(a.retrievalSampleCount, b.retrievalSampleCount); // aligned "retrieval" rng stream
     EXPECT_EQ(readFile(a.directory / "retrieval_metrics.csv"),
               readFile(b.directory / "retrieval_metrics.csv"));
+}
+
+// (f) learning_curve.csv schema (Phase 7): exact header, one data row per round, and the
+// interactions_per_user column equals min((round+1)*feedSize, interactionsPerUser).
+TEST(ExperimentRunnerTest, LearningCurveSchema) {
+    const fs::path root = fs::path(::testing::TempDir()) / "rr_exp_learncurve_schema";
+    fs::remove_all(root);
+
+    const ExperimentConfig config = tinyConfig(RecommendationAlgorithm::ExactVector);
+    ExperimentRunner runner(config, root);
+    const ExperimentResult result = runner.run();
+
+    const fs::path csv = result.directory / "learning_curve.csv";
+    EXPECT_EQ(
+        readCsvHeader(csv),
+        "round,interactions_per_user,mean_reward_per_impression,mean_estimated_hidden_cosine");
+
+    const auto rows = readCsvRows(csv);
+    ASSERT_EQ(rows.size(), result.rounds.size()); // one data row per round
+    const size_t feedSize = config.recommendation.feedSize;
+    const size_t budget = config.simulation.interactionsPerUser;
+    for (size_t r = 0; r < rows.size(); ++r) {
+        ASSERT_EQ(rows[r].size(), 4u);
+        EXPECT_EQ(std::stoul(rows[r][0]), r); // round index
+        EXPECT_EQ(std::stoul(rows[r][1]), std::min((r + 1) * feedSize, budget));
+        EXPECT_TRUE(std::isfinite(std::stod(rows[r][2]))); // reward per impression
+        const double cosine = std::stod(rows[r][3]);       // estimate<->hidden alignment
+        EXPECT_GE(cosine, -1.0001);
+        EXPECT_LE(cosine, 1.0001);
+    }
+}
+
+// (g) Frozen arm (learning.enabled == false): the three per-user preference vectors never move off
+// the cold-start prior. ExperimentRunner encapsulates the users, so the externally observable
+// projection of "estimatedPreference is frozen" is the learning curve's alignment column: it must
+// be CONSTANT across rounds AND equal to the independently-computed cold-start alignment.
+TEST(ExperimentRunnerTest, FrozenArmAlignmentIsConstantAtColdStart) {
+    const fs::path root = fs::path(::testing::TempDir()) / "rr_exp_frozen";
+    fs::remove_all(root);
+
+    ExperimentConfig config = tinyConfig(RecommendationAlgorithm::ExactVector);
+    config.learning.enabled = false;
+    ExperimentRunner runner(config, root);
+    const ExperimentResult result = runner.run();
+
+    EXPECT_FALSE(result.learningEnabled);
+
+    const double expected = coldStartAlignment(config);
+    const auto rows = readCsvRows(result.directory / "learning_curve.csv");
+    ASSERT_GE(rows.size(), 2u); // multiple rounds so "constant across rounds" is meaningful
+
+    const std::string firstCosine = rows.front()[3];
+    for (const auto &row : rows) {
+        ASSERT_EQ(row.size(), 4u);
+        EXPECT_EQ(row[3], firstCosine) << "frozen alignment column varies across rounds";
+        EXPECT_NEAR(std::stod(row[3]), expected, 1e-5); // ... and equals the cold-start prior value
+    }
+    EXPECT_NEAR(result.finalEstimatedHiddenCosine, expected, 1e-5);
+}
+
+// (h) Learning arm (learning.enabled == true): under online updates most users' estimatedPreference
+// moves off the cold-start prior, so the learning curve's alignment column becomes NON-constant.
+//
+// EXPECTED FAIL in THIS worktree: the OnlineUserStateUpdater here is Package A's no-op stub, so no
+// preference vector ever changes and the column stays constant -> the ASSERT below fails. This is
+// the intended signal that the updater is inert; the test is correct and passes once the real
+// updater lands at integration. It fails ONLY because the vectors never change (no crash, no other
+// assertion): the cold-start estimates are still unit-length, so ranking/feature extraction and the
+// rest of the run behave exactly as in the frozen arm.
+TEST(ExperimentRunnerTest, LearningArmAlignmentChangesOverTime) {
+    const fs::path root = fs::path(::testing::TempDir()) / "rr_exp_learning";
+    fs::remove_all(root);
+
+    ExperimentConfig config = tinyConfig(RecommendationAlgorithm::ExactVector);
+    config.learning.enabled = true;
+    config.simulation.interactionsPerUser = 20;
+    config.recommendation.feedSize =
+        5; // -> 4 rounds, enough to see convergence with a real updater
+    ExperimentRunner runner(config, root);
+    const ExperimentResult result = runner.run();
+
+    EXPECT_TRUE(result.learningEnabled);
+
+    const auto rows = readCsvRows(result.directory / "learning_curve.csv");
+    ASSERT_GE(rows.size(), 2u);
+    // The alignment column must vary: at least one round differs from the first. Against the no-op
+    // stub it is constant and this fails (expected until integration with Package A's updater).
+    bool anyDifferent = false;
+    for (const auto &row : rows) {
+        ASSERT_EQ(row.size(), 4u);
+        if (row[3] != rows.front()[3]) {
+            anyDifferent = true;
+        }
+    }
+    EXPECT_TRUE(anyDifferent)
+        << "estimate<->hidden alignment is constant across rounds: the OnlineUserStateUpdater did "
+           "not change any user's estimatedPreference. EXPECTED against Package A's no-op stub; "
+           "passes once the real updater is integrated.";
+}
+
+// (i) learning_curve.csv determinism: same config + seed twice ⇒ byte-identical. Deterministic
+// even against the no-op stub (num() fixed precision; the updater consumes no rng). Mirrors the
+// existing byte-identical determinism tests.
+TEST(ExperimentRunnerTest, LearningCurveDeterministicByteIdentical) {
+    const fs::path rootA = fs::path(::testing::TempDir()) / "rr_exp_learn_det_a";
+    const fs::path rootB = fs::path(::testing::TempDir()) / "rr_exp_learn_det_b";
+    fs::remove_all(rootA);
+    fs::remove_all(rootB);
+
+    ExperimentConfig config = tinyConfig(RecommendationAlgorithm::HnswRanker);
+    config.learning.enabled = true;
+    ExperimentRunner runnerA(config, rootA);
+    ExperimentRunner runnerB(config, rootB);
+    const ExperimentResult a = runnerA.run();
+    const ExperimentResult b = runnerB.run();
+
+    EXPECT_EQ(readFile(a.directory / "learning_curve.csv"),
+              readFile(b.directory / "learning_curve.csv"));
 }

@@ -16,8 +16,9 @@ namespace rr {
 Embedding globalAveragePreference(const std::vector<HiddenUserState> &hidden);
 
 // Apply the cold-start prior to every user: estimatedPreference, longTermPreference, and
-// sessionPreference all start at `prior` (no online updates until Phase 7 — baselines run with
-// static estimates, recorded as such in experiment output).
+// sessionPreference all start at `prior`. From Phase 7 the OnlineUserStateUpdater evolves all
+// three per interaction (when LearningConfig.enabled); with learning disabled the estimates stay
+// frozen at this prior for the whole run — the pre-Phase-7 baseline behaviour.
 void applyColdStart(std::vector<User> &users, const Embedding &prior);
 
 } // namespace rr

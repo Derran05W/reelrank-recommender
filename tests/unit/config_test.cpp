@@ -52,11 +52,14 @@ TEST(ConfigTest, AllBlocksParse) {
           {"trending_weight", 0.1},
           {"creator_affinity_weight", 0.1},
           {"exploration_weight", 0.05},
-          {"repetition_penalty", 0.25}}},
+          {"repetition_penalty", 0.25},
+          {"session_topic_weight", 0.07}}},
         {"learning",
-         {{"long_term_rate", 0.03},
+         {{"enabled", false},
+          {"long_term_rate", 0.03},
           {"session_rate", 0.2},
           {"recent_window", 30},
+          {"session_lambda", 0.88},
           {"long_term_weight", 0.7},
           {"session_weight", 0.3}}},
         {"exploration", {{"enabled", false}, {"epsilon", 0.1}}},
@@ -71,8 +74,11 @@ TEST(ConfigTest, AllBlocksParse) {
     EXPECT_EQ(c.hnsw.efSearch, 128u);
     EXPECT_DOUBLE_EQ(c.ranking.similarityWeight, 0.4);
     EXPECT_DOUBLE_EQ(c.ranking.repetitionPenalty, 0.25);
+    EXPECT_DOUBLE_EQ(c.ranking.sessionTopicWeight, 0.07);
+    EXPECT_FALSE(c.learning.enabled);
     EXPECT_DOUBLE_EQ(c.learning.longTermRate, 0.03);
     EXPECT_EQ(c.learning.recentWindow, 30u);
+    EXPECT_DOUBLE_EQ(c.learning.sessionLambda, 0.88);
     EXPECT_DOUBLE_EQ(c.learning.longTermWeight, 0.7);
     EXPECT_DOUBLE_EQ(c.learning.sessionWeight, 0.3);
     EXPECT_FALSE(c.exploration.enabled);
@@ -124,6 +130,15 @@ TEST(ConfigTest, EvaluationBlockParsesAndRejectsUnknownKeys) {
     }
 }
 
+TEST(ConfigTest, LearningDefaults) {
+    // Phase 7 additions: learning is on by default; the frozen-estimates experiment arm sets
+    // enabled=false. Lambda default sits mid TDD 11.3's suggested 0.85-0.95 range.
+    const ExperimentConfig c{};
+    EXPECT_TRUE(c.learning.enabled);
+    EXPECT_DOUBLE_EQ(c.learning.sessionLambda, 0.90);
+    EXPECT_DOUBLE_EQ(c.ranking.sessionTopicWeight, 0.05);
+}
+
 TEST(ConfigTest, RoundTrip) {
     ExperimentConfig c;
     c.simulation.seed = 99;
@@ -131,6 +146,9 @@ TEST(ConfigTest, RoundTrip) {
     c.recommendation.feedSize = 25;
     c.hnsw.efSearch = 77;
     c.ranking.similarityWeight = 0.42;
+    c.ranking.sessionTopicWeight = 0.06;
+    c.learning.enabled = false;
+    c.learning.sessionLambda = 0.93;
     c.learning.sessionWeight = 0.31;
     c.exploration.epsilon = 0.09;
     c.diversity.mmrLambda = 0.66;

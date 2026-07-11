@@ -146,6 +146,9 @@ int main(int argc, char **argv) {
         std::cout << "  completion_rate      " << m.completionRate << "\n";
         std::cout << "  reward_per_impression " << m.rewardPerImpression << "\n";
         std::cout << "  mean_true_affinity   " << m.meanTrueAffinity << "\n";
+        // Online-learning headline (Phase 7, TDD 18.5): estimate<->hidden alignment at end of run.
+        std::cout << "  est_hidden_cosine    " << result.finalEstimatedHiddenCosine
+                  << (result.learningEnabled ? " (learning on)" : " (frozen)") << "\n";
         std::cout << "  mean_regret          " << result.meanRegret << " (over "
                   << result.sampledRequestCount << " sampled requests)\n";
         // Live retrieval headline (TDD 18.1), only when retrieval samples were taken (vector-based

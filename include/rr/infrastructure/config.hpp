@@ -57,6 +57,11 @@ struct RankingConfig {
     // bonus; the impression term is a fatigue penalty (subtracted, like repetition_penalty).
     double durationMatchWeight = 0.05;
     double impressionPenaltyWeight = 0.05;
+    // Weight on the TDD 14.1 session-topic-similarity feature (cosine between the candidate and
+    // the user's session preference vector), active from Phase 7 when session vectors start
+    // updating online. An addition to the TDD 14.2 example weights (which predate the feature
+    // list's session term); config-driven like every other weight per 14.2.
+    double sessionTopicWeight = 0.05;
     // Decay half-lives (simulated seconds) for the two time-sensitive scoring inputs, an addition
     // to the TDD 21 example: freshness decay from createdAt is mandated configurable by TDD 8.2,
     // trending time-decay by TDD 12.4. Consumed by rr::freshnessScore / rr::trendingScore and by
@@ -67,9 +72,17 @@ struct RankingConfig {
 };
 
 struct LearningConfig {
+    // Master switch for online preference learning (Phase 7): false freezes every user at the
+    // cold-start estimate (the pre-Phase-7 behaviour), giving the learning-vs-frozen experiment
+    // arm mandated by the phase plan. An addition to the TDD 21 example.
+    bool enabled = true;
     double longTermRate = 0.02;
     double sessionRate = 0.15;
     uint32_t recentWindow = 20;
+    // TDD 11.3 session-decay lambda (suggested range 0.85-0.95): weight lambda^(n-i) applied to
+    // the i-th most recent interaction when recomputing the session vector. An addition to the
+    // TDD 21 example, mandated configurable by TDD 11.3.
+    double sessionLambda = 0.90;
     // long_term_weight / session_weight are an addition to the TDD 21 example, mandated
     // configurable by TDD 8.3.
     double longTermWeight = 0.65;

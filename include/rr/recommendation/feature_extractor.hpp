@@ -16,6 +16,7 @@ namespace rr {
 // they enter the score as NEGATIVE contributions, but the feature value itself is non-negative.
 struct FeatureVector {
     float similarity;      // (cosine + 1) / 2
+    float sessionTopic;    // (cos(user.sessionPreference, embedding) + 1) / 2  (TDD 14.1)
     float quality;         // reel.intrinsicQuality (already [0,1])
     float freshness;       // freshnessScore(createdAt, now, halfLife)
     float popularity;      // pool min-max of smoothedPopularity

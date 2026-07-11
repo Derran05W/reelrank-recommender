@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <vector>
 
+#include "rr/core/embedding.hpp"
 #include "rr/domain/interaction.hpp"
 #include "rr/recommendation/popularity_recommender.hpp"
 #include "rr/recommendation/scoring.hpp"
@@ -84,7 +85,8 @@ std::vector<FeatureVector> FeatureExtractor::extract(const User &user,
 
         if (!inRange(c.reelId, reels_)) {
             // Defensive: an out-of-range candidate (should never reach the ranker post-filter).
-            // Neutral / zero everything, and a neutral duration match.
+            // Neutral / zero everything, and a neutral session/duration match.
+            f.sessionTopic = 0.5f;
             f.quality = 0.0f;
             f.freshness = 0.0f;
             f.trending = 0.0f;
@@ -97,6 +99,24 @@ std::vector<FeatureVector> FeatureExtractor::extract(const User &user,
             continue;
         }
         const Reel &reel = reels_[c.reelId.value];
+
+        // session_topic (TDD 14.1): FIXED affine map of the cosine between the candidate embedding
+        // and the user's SESSION preference vector, (cos + 1) / 2 in [0,1], clamped -- IDENTICAL
+        // normalization to `similarity` above. Both the embedding and the session vector are
+        // unit-length by construction (embeddings at generation; sessionPreference at cold start
+        // and after every OnlineUserStateUpdater::apply, Phase 7 contract), so cosine == dot. Not
+        // pool-relative, so the contribution is directly comparable across requests. The Phase 6
+        // WeightedRanker left this inert; Phase 7 activates it as the session vectors start
+        // updating online. Defensive: if the session vector is absent / wrong-dimension (a caller
+        // that bypassed cold start), fall back to the neutral 0.5 rather than let rr::dot throw on
+        // the hot path (D10), matching this extractor's "a bad lookup can never throw" doctrine.
+        if (user.sessionPreference.size() == reel.embedding.size() &&
+            !user.sessionPreference.empty()) {
+            f.sessionTopic = clamp01(
+                (static_cast<double>(dot(user.sessionPreference, reel.embedding)) + 1.0) / 2.0);
+        } else {
+            f.sessionTopic = 0.5f;
+        }
 
         // quality: reel.intrinsicQuality is ALREADY clamped to [0,1] at generation
         // (reel_generator.cpp: clamp01(baseQuality + N(0, 0.1))), so it is used as-is (clamp is a
@@ -125,9 +145,6 @@ std::vector<FeatureVector> FeatureExtractor::extract(const User &user,
         // exploration: constant 0.0 until Phase 8 (epsilon-greedy). The weight exists in config so
         // the term is wired but inert now (TDD 14.1 exploration bonus deferred).
         f.exploration = 0.0f;
-
-        // Session-topic similarity (TDD 14.1) is DEFERRED to Phase 7 (needs the session preference
-        // vector); intentionally not computed here.
 
         // duration_match: preferred duration = mean duration of recently completed/liked reels;
         // match = 1 - |candDuration - preferred| / durationRange (5-120 s span => range 115),

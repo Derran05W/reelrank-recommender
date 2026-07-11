@@ -1,5 +1,6 @@
 #include "rr/evaluation/results_writer.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <iomanip>
 #include <locale>
@@ -24,11 +25,19 @@ std::string num(double v, int precision = 6) {
     return oss.str();
 }
 
-const char *kStaticEstimatesNote =
-    "Baselines run with STATIC cold-start estimated preferences (TDD 11.1): every user's "
-    "estimatedPreference is the global-average hidden preference and there are no online updates "
-    "until Phase 7. Reported metrics therefore reflect fixed, non-personalized-per-user estimates; "
-    "a flat learning curve is expected.";
+const char *kLearningEnabledNote =
+    "Online preference learning is ENABLED (Phase 7, TDD 8.3/11.2/11.3): every user starts at the "
+    "cold-start global-average estimate (TDD 11.1) and the OnlineUserStateUpdater updates the "
+    "long-term/session/estimated preference vectors after each interaction. learning_curve.csv's "
+    "mean_estimated_hidden_cosine should trend up as estimates converge toward the hidden "
+    "preference.";
+
+const char *kLearningFrozenNote =
+    "Online preference learning is DISABLED (frozen arm): every user's estimatedPreference stays "
+    "at "
+    "the cold-start global-average hidden preference (TDD 11.1) with no online updates. Reported "
+    "metrics reflect fixed, non-personalized-per-user estimates; learning_curve.csv's "
+    "mean_estimated_hidden_cosine is constant across rounds.";
 
 const char *kRegretUnitsNote =
     "Regret is measured in TRUE-AFFINITY units, not reward units: simulating counterfactual oracle "
@@ -100,6 +109,13 @@ void ResultsWriter::writeSummaryJson(const ExperimentResult &result) {
                    {"cumulative_regret", result.cumulativeRegret},
                    {"regret_units_note", kRegretUnitsNote}};
 
+    // Online preference learning (Phase 7). `final_estimated_hidden_cosine` is the mean
+    // cos(estimatedPreference, hiddenPreference) over all users at the end of the last round
+    // (TDD 18.5) - the headline convergence number; deterministic.
+    j["learning"] = {{"enabled", result.learningEnabled},
+                     {"final_estimated_hidden_cosine", result.finalEstimatedHiddenCosine},
+                     {"note", result.learningEnabled ? kLearningEnabledNote : kLearningFrozenNote}};
+
     // Live retrieval quality (TDD 18.1). Deterministic (exact index searches), unlike the timing
     // subsection below. `note` explains whether metrics were computed for this algorithm.
     j["retrieval"] = {
@@ -111,7 +127,7 @@ void ResultsWriter::writeSummaryJson(const ExperimentResult &result) {
         {"mean_distance_error", result.retrievalDistanceError},
         {"note", result.retrievalApplicable ? kRetrievalNote : kRetrievalNotApplicableNote}};
 
-    j["notes"] = {{"static_estimates", kStaticEstimatesNote},
+    j["notes"] = {{"learning", result.learningEnabled ? kLearningEnabledNote : kLearningFrozenNote},
                   {"baseline_flags", kBaselineFlagsNote}};
 
     // Wall-clock timing is confined to this subsection + latency_metrics.csv + metadata.json; it is
@@ -156,10 +172,20 @@ void ResultsWriter::writeRecommendationMetricsCsv(const ExperimentResult &result
 }
 
 void ResultsWriter::writeLearningCurveCsv(const ExperimentResult &result) {
+    // Cold-start learning curve (Phase 7, TDD 18.5): reward and estimate<->hidden alignment against
+    // cumulative interaction count. `interactions_per_user` is the per-user interaction budget
+    // spent through this round: min((round+1)*feedSize, interactionsPerUser). With learning enabled
+    // mean_estimated_hidden_cosine trends up as estimates converge; with learning disabled (frozen
+    // arm) it is CONSTANT across rounds. Deterministic (num() fixed precision): byte-identical
+    // across same-seed runs.
+    const size_t feedSize = result.config.recommendation.feedSize;
+    const size_t interactionsPerUser = result.config.simulation.interactionsPerUser;
     std::ofstream csv(result.directory / "learning_curve.csv");
-    csv << "round,mean_reward_per_impression\n";
+    csv << "round,interactions_per_user,mean_reward_per_impression,mean_estimated_hidden_cosine\n";
     for (const RoundMetrics &r : result.rounds) {
-        csv << r.round << ',' << num(r.metrics.rewardPerImpression) << '\n';
+        const size_t interactions = std::min((r.round + 1) * feedSize, interactionsPerUser);
+        csv << r.round << ',' << interactions << ',' << num(r.metrics.rewardPerImpression) << ','
+            << num(r.meanEstimatedHiddenCosine) << '\n';
     }
 }
 

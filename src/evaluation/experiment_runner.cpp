@@ -20,6 +20,7 @@
 #include "rr/evaluation/retrieval_evaluator.hpp"
 #include "rr/infrastructure/clock.hpp"
 #include "rr/infrastructure/random.hpp"
+#include "rr/learning/online_user_state_updater.hpp"
 #include "rr/recommendation/effective_preference.hpp"
 #include "rr/recommendation/recommender.hpp"
 #include "rr/recommendation/recommender_factory.hpp"
@@ -58,10 +59,18 @@ ExperimentResult ExperimentRunner::run() {
     Stopwatch wall; // total wall time (D9: provenance only, confined to summary.timing).
     const uint64_t seed = config_.simulation.seed;
 
-    // 1. Dataset + cold-start. Baselines run with STATIC estimated preferences (no online learning
-    //    until Phase 7); recorded as a note in summary.json.
+    // 1. Dataset + cold-start prior (TDD 11.1): every user's three preference vectors start at the
+    //    global-average hidden preference. From here they either stay frozen (learning disabled) or
+    //    update online after every interaction (Phase 7).
     GeneratedDataset ds = generateDataset(config_.simulation, seed);
     applyColdStart(ds.users, globalAveragePreference(ds.hiddenStates));
+
+    // Online preference learning (Phase 7, TDD 8.3/11.2/11.3). Constructed ONCE over the immutable
+    // reel catalog; apply() runs after each Simulator::step below. It consumes no rng/clock, so
+    // invoking it is stream-neutral (D8) - the recommender/behaviour/oracle streams are untouched.
+    // When config.learning.enabled is false the updater is never invoked and estimates stay frozen.
+    const OnlineUserStateUpdater updater(ds.reels, config_.learning);
+    const bool learningEnabled = config_.learning.enabled;
 
     // 2. Simulator, recommender, and oracle each on an INDEPENDENT named rng stream (D8) so adding
     //    the oracle never perturbs the behaviour or recommender streams.
@@ -104,6 +113,9 @@ ExperimentResult ExperimentRunner::run() {
         double distErrorSum = 0.0;
     };
     std::vector<RetrievalAcc> retrievalByRound(rounds);
+    // Estimate<->hidden alignment (TDD 18.5), one mean per round measured after the round
+    // completes.
+    std::vector<double> alignmentByRound(rounds, 0.0);
 
     std::vector<double> latencies;
     std::vector<double> retrievalLatencies;
@@ -192,6 +204,14 @@ ExperimentResult ExperimentRunner::run() {
                 const Creator &creator = ds.creators[reel.creatorId.value];
                 const StepResult step = sim.step(user, ds.hiddenStates[u], reel, creator);
 
+                // Online preference update (Phase 7): runs AFTER Simulator::step has recorded the
+                // interaction into user.recentInteractions, updating ONLY the three preference
+                // vectors (long-term / session / cached estimate). Gated by learning.enabled so the
+                // frozen arm keeps the cold-start estimates. Stream-neutral (no rng/clock).
+                if (learningEnabled) {
+                    updater.apply(user, reel, step.event);
+                }
+
                 ImpressionSample s;
                 s.watchRatio = step.event.watchRatio;
                 s.watchSeconds = step.event.watchSeconds;
@@ -210,6 +230,19 @@ ExperimentResult ExperimentRunner::run() {
             }
             doneByUser[u] += toConsume;
         }
+
+        // End-of-round estimate<->hidden alignment (TDD 18.5): mean over ALL users of
+        // cos(estimatedPreference, hiddenPreference). Both are unit-length, so cosine == dot.
+        // Evaluation-only hidden-state read (TDD 18.2 carve-out, same as trueAffinity above); the
+        // aggregate never reaches a recommender. Consumes no rng, so it is stream-neutral (D8).
+        if (!ds.users.empty()) {
+            double cosineSum = 0.0;
+            for (size_t u = 0; u < ds.users.size(); ++u) {
+                cosineSum +=
+                    dot(ds.users[u].estimatedPreference, ds.hiddenStates[u].hiddenPreference);
+            }
+            alignmentByRound[round] = cosineSum / static_cast<double>(ds.users.size());
+        }
     }
 
     // 4. Assemble the result.
@@ -225,6 +258,7 @@ ExperimentResult ExperimentRunner::run() {
     result.impressionCount = impressionCount;
     result.overall = metrics.overall();
     result.oracleSampleRate = config_.evaluation.oracleSampleRate;
+    result.learningEnabled = learningEnabled;
     result.retrievalApplicable = retrievalApplicable;
     result.retrievalSampleRate = config_.evaluation.retrievalSampleRate;
 
@@ -255,6 +289,7 @@ ExperimentResult ExperimentRunner::run() {
             rm.meanRecallAt50 = racc.recall50Sum / n;
             rm.meanDistanceError = racc.distErrorSum / n;
         }
+        rm.meanEstimatedHiddenCosine = alignmentByRound[r];
         result.rounds.push_back(rm);
 
         totalSampled += regretByRound[r].sampled;
@@ -267,6 +302,8 @@ ExperimentResult ExperimentRunner::run() {
     result.sampledRequestCount = totalSampled;
     result.meanRegret = totalSampled > 0 ? totalRegretSum / static_cast<double>(totalSampled) : 0.0;
     result.cumulativeRegret = totalRegretSum;
+    result.finalEstimatedHiddenCosine =
+        result.rounds.empty() ? 0.0 : result.rounds.back().meanEstimatedHiddenCosine;
 
     result.retrievalSampleCount = totalRetrievalSamples;
     if (totalRetrievalSamples > 0) {

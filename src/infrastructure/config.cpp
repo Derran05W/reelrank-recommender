@@ -111,6 +111,7 @@ void to_json(json &j, const RankingConfig &c) {
              {"repetition_penalty", c.repetitionPenalty},
              {"duration_match_weight", c.durationMatchWeight},
              {"impression_penalty_weight", c.impressionPenaltyWeight},
+             {"session_topic_weight", c.sessionTopicWeight},
              {"freshness_half_life_seconds", c.freshnessHalfLifeSeconds},
              {"trending_half_life_seconds", c.trendingHalfLifeSeconds}};
 }
@@ -120,7 +121,8 @@ void from_json(const json &j, RankingConfig &c) {
                     {"similarity_weight", "quality_weight", "freshness_weight", "popularity_weight",
                      "trending_weight", "creator_affinity_weight", "exploration_weight",
                      "repetition_penalty", "duration_match_weight", "impression_penalty_weight",
-                     "freshness_half_life_seconds", "trending_half_life_seconds"});
+                     "session_topic_weight", "freshness_half_life_seconds",
+                     "trending_half_life_seconds"});
     readKey(j, "similarity_weight", c.similarityWeight);
     readKey(j, "quality_weight", c.qualityWeight);
     readKey(j, "freshness_weight", c.freshnessWeight);
@@ -131,25 +133,30 @@ void from_json(const json &j, RankingConfig &c) {
     readKey(j, "repetition_penalty", c.repetitionPenalty);
     readKey(j, "duration_match_weight", c.durationMatchWeight);
     readKey(j, "impression_penalty_weight", c.impressionPenaltyWeight);
+    readKey(j, "session_topic_weight", c.sessionTopicWeight);
     readKey(j, "freshness_half_life_seconds", c.freshnessHalfLifeSeconds);
     readKey(j, "trending_half_life_seconds", c.trendingHalfLifeSeconds);
 }
 
 void to_json(json &j, const LearningConfig &c) {
-    j = json{{"long_term_rate", c.longTermRate},
+    j = json{{"enabled", c.enabled},
+             {"long_term_rate", c.longTermRate},
              {"session_rate", c.sessionRate},
              {"recent_window", c.recentWindow},
+             {"session_lambda", c.sessionLambda},
              {"long_term_weight", c.longTermWeight},
              {"session_weight", c.sessionWeight}};
 }
 
 void from_json(const json &j, LearningConfig &c) {
-    ensureKnownKeys(
-        j, "learning",
-        {"long_term_rate", "session_rate", "recent_window", "long_term_weight", "session_weight"});
+    ensureKnownKeys(j, "learning",
+                    {"enabled", "long_term_rate", "session_rate", "recent_window", "session_lambda",
+                     "long_term_weight", "session_weight"});
+    readKey(j, "enabled", c.enabled);
     readKey(j, "long_term_rate", c.longTermRate);
     readKey(j, "session_rate", c.sessionRate);
     readKey(j, "recent_window", c.recentWindow);
+    readKey(j, "session_lambda", c.sessionLambda);
     readKey(j, "long_term_weight", c.longTermWeight);
     readKey(j, "session_weight", c.sessionWeight);
 }
