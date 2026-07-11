@@ -3,6 +3,8 @@
 #include "rr/infrastructure/config.hpp"
 #include "rr/infrastructure/random.hpp"
 #include "rr/learning/reward_model.hpp"
+#include "rr/recommendation/popularity_recommender.hpp"
+#include "rr/recommendation/scoring.hpp"
 #include "rr/simulation/dataset_generator.hpp"
 
 #include <gtest/gtest.h>
@@ -46,13 +48,29 @@ Timestamp roundedWatch(float watchSeconds) {
     return static_cast<Timestamp>(std::lround(std::max(0.0f, watchSeconds)));
 }
 
+// The engagement increment this event contributes to the trending accumulator: the exact twin of
+// the popularity numerator's per-event bump (+1 completion, +2 like, +4 share). Structural: read
+// from the outcome the behaviour model actually produced, never assumed.
+double trendingIncrement(const BehaviourOutcome &o) {
+    return (o.completed ? 1.0 : 0.0) + (o.liked ? 2.0 : 0.0) + (o.shared ? 4.0 : 0.0);
+}
+
+// GOLDEN mirror of Simulator::step's creator-affinity update: the observable-flag gains in the
+// exact accumulation order used by the implementation (documented constants in simulator.cpp).
+// If any impl gain drifts, the mirror diverges on the step where that flag fires.
+float expectedAffinityDelta(const BehaviourOutcome &o) {
+    return (o.followed ? 0.25f : 0.0f) + (o.shared ? 0.15f : 0.0f) + (o.liked ? 0.10f : 0.0f) +
+           (o.completed ? 0.02f : 0.0f) + (o.notInterested ? -0.20f : 0.0f);
+}
+
 } // namespace
 
 // Each step increments reel counters exactly in line with the flags of the outcome it returned:
 // impressions always, completions/likes/shares/skips iff the corresponding flag fired.
 TEST(SimulatorTest, ReelCountersTrackOutcomeFlags) {
     GeneratedDataset ds = generateDataset(smallConfig(), /*seed=*/11);
-    Simulator sim{BehaviourConfig{}, RewardConfig{}, forkRng(11, "behaviour"), /*recentWindow=*/20};
+    Simulator sim{BehaviourConfig{}, RewardConfig{}, forkRng(11, "behaviour"), /*recentWindow=*/20,
+                  /*trendingHalfLifeSeconds=*/21600.0};
 
     for (int round = 0; round < 40; ++round) {
         User &user = ds.users[round % ds.users.size()];
@@ -80,7 +98,8 @@ TEST(SimulatorTest, ReelCountersTrackOutcomeFlags) {
 // clock (D9). We infer the overhead from the first step and assert it is constant and positive.
 TEST(SimulatorTest, ClockAdvancesByWatchPlusFixedOverhead) {
     GeneratedDataset ds = generateDataset(smallConfig(), /*seed=*/5);
-    Simulator sim{BehaviourConfig{}, RewardConfig{}, forkRng(5, "behaviour"), /*recentWindow=*/20};
+    Simulator sim{BehaviourConfig{}, RewardConfig{}, forkRng(5, "behaviour"), /*recentWindow=*/20,
+                  /*trendingHalfLifeSeconds=*/21600.0};
 
     EXPECT_EQ(sim.now(), 0u); // starts at 0
 
@@ -117,7 +136,8 @@ TEST(SimulatorTest, ClockAdvancesByWatchPlusFixedOverhead) {
 TEST(SimulatorTest, EventFieldsConsistentWithOutcome) {
     GeneratedDataset ds = generateDataset(smallConfig(), /*seed=*/7);
     const RewardConfig rewardCfg{};
-    Simulator sim{BehaviourConfig{}, rewardCfg, forkRng(7, "behaviour"), /*recentWindow=*/20};
+    Simulator sim{BehaviourConfig{}, rewardCfg, forkRng(7, "behaviour"), /*recentWindow=*/20,
+                  /*trendingHalfLifeSeconds=*/21600.0};
     RewardModel reference{rewardCfg}; // independent oracle for the reward field
 
     for (int round = 0; round < 40; ++round) {
@@ -144,7 +164,8 @@ TEST(SimulatorTest, EventFieldsConsistentWithOutcome) {
 TEST(SimulatorTest, UserBookkeepingAndRecentWindowBound) {
     GeneratedDataset ds = generateDataset(smallConfig(), /*seed=*/9);
     const uint32_t recentWindow = 4;
-    Simulator sim{BehaviourConfig{}, RewardConfig{}, forkRng(9, "behaviour"), recentWindow};
+    Simulator sim{BehaviourConfig{}, RewardConfig{}, forkRng(9, "behaviour"), recentWindow,
+                  /*trendingHalfLifeSeconds=*/21600.0};
 
     User &user = ds.users[0];
     const HiddenUserState &hidden = ds.hiddenStates[0];
@@ -176,7 +197,8 @@ TEST(SimulatorTest, UserBookkeepingAndRecentWindowBound) {
 // interaction that opened the new session). SessionId is monotonic and increments by exactly 1.
 TEST(SimulatorTest, SessionRotationAdvancesIdAndResetsLength) {
     GeneratedDataset ds = generateDataset(smallConfig(), /*seed=*/3);
-    Simulator sim{BehaviourConfig{}, RewardConfig{}, forkRng(3, "behaviour"), /*recentWindow=*/50};
+    Simulator sim{BehaviourConfig{}, RewardConfig{}, forkRng(3, "behaviour"), /*recentWindow=*/50,
+                  /*trendingHalfLifeSeconds=*/21600.0};
 
     User &user = ds.users[0];
     HiddenUserState hidden = ds.hiddenStates[0];
@@ -207,4 +229,123 @@ TEST(SimulatorTest, SessionRotationAdvancesIdAndResetsLength) {
     }
 
     EXPECT_GT(rotations, 0) << "expected at least one session rotation over 80 short-session steps";
+}
+
+// --- Phase 6: trending accumulator maintenance (TDD 12.4) -------------------------------------
+
+// On every impression the reel's trending accumulators are decayed forward to the event's
+// timestamp, then bumped by exactly the popularity-numerator increment for that event, and
+// trendingUpdatedAt is advanced. We reconstruct the expected accumulators step-by-step from the
+// OBSERVED outcome flags and OBSERVED timestamps, decaying with rr::trendingDecayFactor
+// (scoring.hpp) as an INDEPENDENT oracle for the simulator's inlined decay. A small half-life makes
+// the decay across the few-second inter-show gaps clearly < 1, so the decay path is genuinely
+// exercised.
+TEST(SimulatorTest, TrendingAccumulatorDecaysAndAccumulatesVsOracle) {
+    GeneratedDataset ds = generateDataset(smallConfig(), /*seed=*/21);
+    const double halfLife = 30.0; // 30 simulated seconds: meaningful decay across each gap
+    Simulator sim{BehaviourConfig{}, RewardConfig{}, forkRng(21, "behaviour"), /*recentWindow=*/50,
+                  halfLife};
+
+    User &user = ds.users[0];
+    const HiddenUserState &hidden = ds.hiddenStates[0];
+    Reel &reel = ds.reels[0]; // one reel, shown repeatedly, so the accumulator builds over gaps
+
+    double expEngagement = reel.trendingEngagement;
+    double expImpressions = reel.trendingImpressions;
+    Timestamp prevUpdatedAt = reel.trendingUpdatedAt;
+
+    for (int i = 0; i < 40; ++i) {
+        StepResult r = sim.step(user, hidden, reel, creatorFor(ds, reel));
+        const Timestamp t = sim.now(); // the event's timestamp (== reel.trendingUpdatedAt now)
+
+        const double w = trendingDecayFactor(prevUpdatedAt, t, halfLife);  // independent oracle
+        EXPECT_LT(w, 1.0) << "gap should decay below 1 at this half-life"; // decay path exercised
+        expEngagement = expEngagement * w + trendingIncrement(r.outcome);
+        expImpressions = expImpressions * w + 1.0;
+        prevUpdatedAt = t;
+
+        EXPECT_NEAR(reel.trendingEngagement, expEngagement, 1e-9);
+        EXPECT_NEAR(reel.trendingImpressions, expImpressions, 1e-9);
+        EXPECT_EQ(reel.trendingUpdatedAt, t); // advanced to the event's timestamp, last
+    }
+}
+
+// With a huge half-life the decay factor is ~1, so the trending accumulators degenerate into
+// UN-decayed twins of the lifetime popularity counters: trendingEngagement == the popularity
+// numerator (completion + 2*like + 4*share) and trendingImpressions == impressionCount. This
+// pins the "exact exponentially-decayed twin of the popularity numerator" contract.
+TEST(SimulatorTest, TrendingAccumulatorIsUndecayedTwinAtHugeHalfLife) {
+    GeneratedDataset ds = generateDataset(smallConfig(), /*seed=*/23);
+    const double halfLife = 1e15; // effectively no decay over the simulated seconds here
+    Simulator sim{BehaviourConfig{}, RewardConfig{}, forkRng(23, "behaviour"), /*recentWindow=*/50,
+                  halfLife};
+
+    User &user = ds.users[0];
+    const HiddenUserState &hidden = ds.hiddenStates[0];
+    Reel &reel = ds.reels[0]; // only this reel is shown, so lifetime counters == these steps
+
+    for (int i = 0; i < 50; ++i) {
+        sim.step(user, hidden, reel, creatorFor(ds, reel));
+    }
+
+    EXPECT_NEAR(reel.trendingEngagement, popularityEngagement(reel), 1e-4);
+    EXPECT_NEAR(reel.trendingImpressions, static_cast<double>(reel.impressionCount), 1e-6);
+    EXPECT_EQ(reel.trendingUpdatedAt, sim.now());
+}
+
+// --- Phase 6: creator-affinity estimate (TDD 12.6, D11) ---------------------------------------
+
+// User::creatorAffinity is populated ONLY from observable outcome flags (never HiddenUserState),
+// accumulated with the documented per-flag gains, and clamped to [0, 1]. We drive a user who is
+// strongly aligned with one creator's reel (so completions/likes fire heavily and the estimate
+// climbs to the ceiling), and mirror the exact per-flag accumulation as an independent golden.
+// This verifies each flag's gain, the [0, 1] clamp (contract for the ranker + creator source),
+// and that only the engaged creator ever appears in the map.
+TEST(SimulatorTest, CreatorAffinityAccumulatesFromFlagsAndClampsToUnit) {
+    GeneratedDataset ds = generateDataset(smallConfig(), /*seed=*/29);
+    Simulator sim{BehaviourConfig{}, RewardConfig{}, forkRng(29, "behaviour"), /*recentWindow=*/50,
+                  /*trendingHalfLifeSeconds=*/21600.0};
+
+    // Find a reel and force strong alignment so the behaviour model engages consistently. Aligning
+    // the (copied) hidden preference to the reel embedding drives high completion probability; this
+    // touches ONLY the hidden state handed to the behaviour model (D11 stays intact).
+    Reel &reel = ds.reels[0];
+    const CreatorId creatorId = reel.creatorId;
+    HiddenUserState hidden = ds.hiddenStates[0];
+    hidden.hiddenPreference = reel.embedding; // unit vector; a = dot == 1 => strong engagement
+    hidden.durationTolerance = 1.0f;          // remove the duration penalty
+    hidden.likePropensity = 0.25f;            // upper end of the valid range
+    hidden.sharePropensity = 0.10f;
+
+    User &user = ds.users[0];
+
+    float expected = 0.0f; // golden running estimate for this single creator
+    bool anySignal = false;
+
+    for (int i = 0; i < 400; ++i) {
+        StepResult r = sim.step(user, hidden, reel, creatorFor(ds, reel));
+
+        const float delta = expectedAffinityDelta(r.outcome);
+        if (delta != 0.0f) {
+            expected = std::clamp(expected + delta, 0.0f, 1.0f);
+            anySignal = true;
+        }
+
+        // Only the engaged creator can ever appear (we only ever show its reel).
+        EXPECT_LE(user.creatorAffinity.size(), 1u);
+        if (anySignal) {
+            ASSERT_TRUE(user.creatorAffinity.count(creatorId));
+            const float actual = user.creatorAffinity.at(creatorId);
+            EXPECT_FLOAT_EQ(actual, expected); // gains + clamp match the golden exactly
+            EXPECT_GE(actual, 0.0f);           // contract: clamped to [0, 1]
+            EXPECT_LE(actual, 1.0f);
+        } else {
+            EXPECT_TRUE(user.creatorAffinity.empty()); // no signal yet => map untouched
+        }
+    }
+
+    ASSERT_TRUE(anySignal) << "aligned user should have produced engagement signals";
+    // Enough aligned completions/likes over 400 steps to saturate the estimate at the ceiling,
+    // proving the upper clamp is actually reached (not just theoretically applied).
+    EXPECT_FLOAT_EQ(user.creatorAffinity.at(creatorId), 1.0f);
 }

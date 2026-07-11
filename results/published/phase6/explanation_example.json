@@ -1,0 +1,229 @@
+{
+  "algorithm": "hnsw_ranker",
+  "feed": [
+    {
+      "contributions": {
+        "creator_affinity": 0.0,
+        "duration_match": 0.043682850897312164,
+        "exploration": 0.0,
+        "freshness": 0.03544560819864273,
+        "impression_penalty": -0.004771208390593529,
+        "popularity": 0.06250433623790741,
+        "quality": 0.04019159823656082,
+        "repetition_penalty": -0.0,
+        "similarity": 0.3676602244377136,
+        "trending": 0.06165584176778793
+      },
+      "creator_id": 4180,
+      "primary_topic": 11,
+      "rank": 0,
+      "reel_id": 16385,
+      "score": 0.6063692569732666,
+      "sources": [
+        3
+      ]
+    },
+    {
+      "contributions": {
+        "creator_affinity": 0.0,
+        "duration_match": 0.04923279210925102,
+        "exploration": 0.0,
+        "freshness": 0.05412982031702995,
+        "impression_penalty": -0.0060205948539078236,
+        "popularity": 0.02796107903122902,
+        "quality": 0.08369305729866028,
+        "repetition_penalty": -0.0,
+        "similarity": 0.3797527551651001,
+        "trending": 3.6594414298110283e-25
+      },
+      "creator_id": 362,
+      "primary_topic": 2,
+      "rank": 1,
+      "reel_id": 55128,
+      "score": 0.5887489318847656,
+      "sources": [
+        0
+      ]
+    },
+    {
+      "contributions": {
+        "creator_affinity": 0.0,
+        "duration_match": 0.04273230955004692,
+        "exploration": 0.0,
+        "freshness": 0.05896982178092003,
+        "impression_penalty": -0.004771208390593529,
+        "popularity": 0.055008664727211,
+        "quality": 0.06347238272428513,
+        "repetition_penalty": -0.0,
+        "similarity": 0.36371728777885437,
+        "trending": 1.3721762115892489e-05
+      },
+      "creator_id": 2459,
+      "primary_topic": 2,
+      "rank": 2,
+      "reel_id": 80253,
+      "score": 0.5791429877281189,
+      "sources": [
+        0
+      ]
+    },
+    {
+      "contributions": {
+        "creator_affinity": 0.0,
+        "duration_match": 0.04995586723089218,
+        "exploration": 0.0,
+        "freshness": 0.05531320720911026,
+        "impression_penalty": -0.006989693734794855,
+        "popularity": 0.06514141708612442,
+        "quality": 0.04970695450901985,
+        "repetition_penalty": -0.0,
+        "similarity": 0.3621138632297516,
+        "trending": 3.932546732698938e-08
+      },
+      "creator_id": 4964,
+      "primary_topic": 2,
+      "rank": 3,
+      "reel_id": 38533,
+      "score": 0.5752416253089905,
+      "sources": [
+        0
+      ]
+    },
+    {
+      "contributions": {
+        "creator_affinity": 0.0,
+        "duration_match": 0.048258356750011444,
+        "exploration": 0.0,
+        "freshness": 0.04805426299571991,
+        "impression_penalty": -0.0060205948539078236,
+        "popularity": 0.05669446662068367,
+        "quality": 0.06560026854276657,
+        "repetition_penalty": -0.0,
+        "similarity": 0.36226367950439453,
+        "trending": 5.9532196949874105e-09
+      },
+      "creator_id": 3573,
+      "primary_topic": 2,
+      "rank": 4,
+      "reel_id": 25928,
+      "score": 0.5748504400253296,
+      "sources": [
+        0
+      ]
+    },
+    {
+      "contributions": {
+        "creator_affinity": 0.0,
+        "duration_match": 0.0371202751994133,
+        "exploration": 0.0,
+        "freshness": 0.05759832262992859,
+        "impression_penalty": -0.007781505584716797,
+        "popularity": 0.05304625630378723,
+        "quality": 0.06627292931079865,
+        "repetition_penalty": -0.0,
+        "similarity": 0.36640864610671997,
+        "trending": 8.119207846126494e-19
+      },
+      "creator_id": 4604,
+      "primary_topic": 2,
+      "rank": 5,
+      "reel_id": 39202,
+      "score": 0.5726649165153503,
+      "sources": [
+        0
+      ]
+    },
+    {
+      "contributions": {
+        "creator_affinity": 0.0,
+        "duration_match": 0.04782510921359062,
+        "exploration": 0.0,
+        "freshness": 0.06206456571817398,
+        "impression_penalty": -0.0030102974269539118,
+        "popularity": 0.03749685361981392,
+        "quality": 0.059396304190158844,
+        "repetition_penalty": -0.0,
+        "similarity": 0.3666323721408844,
+        "trending": 1.445686055871588e-17
+      },
+      "creator_id": 1507,
+      "primary_topic": 2,
+      "rank": 6,
+      "reel_id": 38624,
+      "score": 0.5704048871994019,
+      "sources": [
+        0
+      ]
+    },
+    {
+      "contributions": {
+        "creator_affinity": 0.0,
+        "duration_match": 0.04918643832206726,
+        "exploration": 0.0,
+        "freshness": 0.05556086450815201,
+        "impression_penalty": -0.004771208390593529,
+        "popularity": 0.03252166509628296,
+        "quality": 0.06872402131557465,
+        "repetition_penalty": -0.0,
+        "similarity": 0.36899876594543457,
+        "trending": 1.7183389350758058e-31
+      },
+      "creator_id": 4046,
+      "primary_topic": 2,
+      "rank": 7,
+      "reel_id": 13825,
+      "score": 0.5702205300331116,
+      "sources": [
+        0
+      ]
+    },
+    {
+      "contributions": {
+        "creator_affinity": 0.0,
+        "duration_match": 0.041148968040943146,
+        "exploration": 0.0,
+        "freshness": 0.053434304893016815,
+        "impression_penalty": -0.0030102974269539118,
+        "popularity": 0.021824093535542488,
+        "quality": 0.08432602137327194,
+        "repetition_penalty": -0.0,
+        "similarity": 0.3628435730934143,
+        "trending": 5.932502650571385e-37
+      },
+      "creator_id": 2476,
+      "primary_topic": 2,
+      "rank": 8,
+      "reel_id": 23376,
+      "score": 0.5605666637420654,
+      "sources": [
+        0
+      ]
+    },
+    {
+      "contributions": {
+        "creator_affinity": 0.0,
+        "duration_match": 0.041578199714422226,
+        "exploration": 0.0,
+        "freshness": 0.06262869387865067,
+        "impression_penalty": -0.0030102974269539118,
+        "popularity": 0.013987716287374496,
+        "quality": 0.06796987354755402,
+        "repetition_penalty": -0.0,
+        "similarity": 0.37603428959846497,
+        "trending": 0.0
+      },
+      "creator_id": 4972,
+      "primary_topic": 2,
+      "rank": 9,
+      "reel_id": 39862,
+      "score": 0.5591884851455688,
+      "sources": [
+        0
+      ]
+    }
+  ],
+  "request_time": 2774900,
+  "seed": 42,
+  "user_id": 3,
+  "warmup_rounds": 20
+}

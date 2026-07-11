@@ -66,7 +66,7 @@ ExperimentResult ExperimentRunner::run() {
     // 2. Simulator, recommender, and oracle each on an INDEPENDENT named rng stream (D8) so adding
     //    the oracle never perturbs the behaviour or recommender streams.
     Simulator sim(config_.behaviour, config_.reward, forkRng(seed, "behaviour"),
-                  config_.learning.recentWindow);
+                  config_.learning.recentWindow, config_.ranking.trendingHalfLifeSeconds);
     RecommenderDeps deps{ds.reels, ds.users, config_};
     std::unique_ptr<Recommender> recommender =
         makeRecommender(config_.algorithm, deps, forkRng(seed, "recommender"));

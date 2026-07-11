@@ -65,7 +65,7 @@ Stream runStream(const GeneratedDataset &ds, uint64_t behaviourSeed,
     std::vector<User> users = ds.users; // mutable per-run copies
     std::vector<Reel> reels = ds.reels;
     Simulator sim{BehaviourConfig{}, RewardConfig{}, forkRng(behaviourSeed, "behaviour"),
-                  /*recentWindow=*/20};
+                  /*recentWindow=*/20, /*trendingHalfLifeSeconds=*/21600.0};
 
     Stream stream;
     stream.events.reserve(visits.size());

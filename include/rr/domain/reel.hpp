@@ -32,6 +32,16 @@ struct Reel {
     uint64_t skipCount;
 
     bool active;
+
+    // Trending accumulator (TDD 12.4): exponentially decayed interaction counters maintained by
+    // Simulator::step and read via rr::trendingScore (scoring.hpp). On every impression at time t
+    // both accumulators are decayed by trendingDecayFactor(trendingUpdatedAt, t, halfLife), then
+    // trendingImpressions += 1 and trendingEngagement += the event's engagement increment (same
+    // 1/2/4 completion/like/share weights as popularityEngagement). Appended after `active` with
+    // defaults so pre-Phase-6 positional aggregate initializers stay valid.
+    double trendingEngagement = 0.0;
+    double trendingImpressions = 0.0;
+    Timestamp trendingUpdatedAt = 0;
 };
 
 } // namespace rr

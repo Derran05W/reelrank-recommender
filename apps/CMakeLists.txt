@@ -16,11 +16,12 @@ target_compile_definitions(benchmark_retrieval PRIVATE
     RR_COMPILER="${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}"
 )
 
-# inspect_user — dumps topic/creator/reel/user distribution summaries as JSON (Phase 2, task 7).
-# Links rr_simulation (which PUBLIC-links rr_core, carrying nlohmann_json transitively). No
-# vector-db dependency at all.
+# inspect_user — dumps topic/creator/reel/user distribution summaries as JSON (Phase 2, task 7)
+# and per-item ranking explanations via --explain-user (Phase 6, task 3). Links rr_evaluation
+# (PUBLIC-links rr_recommend + rr_simulation) for cold-start init and the recommender factory.
+# D2 containment holds: no vector-db header here.
 add_executable(inspect_user inspect_user.cpp)
-target_link_libraries(inspect_user PRIVATE rr_simulation rr_warnings)
+target_link_libraries(inspect_user PRIVATE rr_evaluation rr_warnings)
 
 # simulate — end-to-end evaluation harness CLI (Phase 4, task 6). Links rr_evaluation (which
 # PUBLIC-links rr_recommend + rr_simulation). D2 containment holds: no vector-db header here —

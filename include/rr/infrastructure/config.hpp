@@ -28,6 +28,10 @@ struct RecommendationConfig {
     uint32_t popularCandidates = 100;
     uint32_t freshCandidates = 100;
     uint32_t explorationCandidates = 50;
+    // trending_candidates / creator_affinity_candidates are an addition to the TDD 21 example;
+    // the counts themselves are mandated by TDD 13 (Trending: 100, Creator affinity: 100).
+    uint32_t trendingCandidates = 100;
+    uint32_t creatorAffinityCandidates = 100;
     bool operator==(const RecommendationConfig &) const = default;
 };
 
@@ -47,6 +51,18 @@ struct RankingConfig {
     double creatorAffinityWeight = 0.07;
     double explorationWeight = 0.05;
     double repetitionPenalty = 0.15;
+    // duration_match_weight / impression_penalty_weight are an addition to the TDD 14.2 example
+    // formula: 14.1 mandates duration-preference match and previous-impression count as ranking
+    // features, and 14.2 mandates every weight be configuration-driven. Duration match is a
+    // bonus; the impression term is a fatigue penalty (subtracted, like repetition_penalty).
+    double durationMatchWeight = 0.05;
+    double impressionPenaltyWeight = 0.05;
+    // Decay half-lives (simulated seconds) for the two time-sensitive scoring inputs, an addition
+    // to the TDD 21 example: freshness decay from createdAt is mandated configurable by TDD 8.2,
+    // trending time-decay by TDD 12.4. Consumed by rr::freshnessScore / rr::trendingScore and by
+    // Simulator::step's accumulator maintenance.
+    double freshnessHalfLifeSeconds = 604800.0; // 7 simulated days
+    double trendingHalfLifeSeconds = 21600.0;   // 6 simulated hours
     bool operator==(const RankingConfig &) const = default;
 };
 

@@ -70,18 +70,23 @@ void to_json(json &j, const RecommendationConfig &c) {
              {"vector_candidates", c.vectorCandidates},
              {"popular_candidates", c.popularCandidates},
              {"fresh_candidates", c.freshCandidates},
-             {"exploration_candidates", c.explorationCandidates}};
+             {"exploration_candidates", c.explorationCandidates},
+             {"trending_candidates", c.trendingCandidates},
+             {"creator_affinity_candidates", c.creatorAffinityCandidates}};
 }
 
 void from_json(const json &j, RecommendationConfig &c) {
     ensureKnownKeys(j, "recommendation",
                     {"feed_size", "vector_candidates", "popular_candidates", "fresh_candidates",
-                     "exploration_candidates"});
+                     "exploration_candidates", "trending_candidates",
+                     "creator_affinity_candidates"});
     readKey(j, "feed_size", c.feedSize);
     readKey(j, "vector_candidates", c.vectorCandidates);
     readKey(j, "popular_candidates", c.popularCandidates);
     readKey(j, "fresh_candidates", c.freshCandidates);
     readKey(j, "exploration_candidates", c.explorationCandidates);
+    readKey(j, "trending_candidates", c.trendingCandidates);
+    readKey(j, "creator_affinity_candidates", c.creatorAffinityCandidates);
 }
 
 void to_json(json &j, const HNSWConfig &c) {
@@ -103,14 +108,19 @@ void to_json(json &j, const RankingConfig &c) {
              {"trending_weight", c.trendingWeight},
              {"creator_affinity_weight", c.creatorAffinityWeight},
              {"exploration_weight", c.explorationWeight},
-             {"repetition_penalty", c.repetitionPenalty}};
+             {"repetition_penalty", c.repetitionPenalty},
+             {"duration_match_weight", c.durationMatchWeight},
+             {"impression_penalty_weight", c.impressionPenaltyWeight},
+             {"freshness_half_life_seconds", c.freshnessHalfLifeSeconds},
+             {"trending_half_life_seconds", c.trendingHalfLifeSeconds}};
 }
 
 void from_json(const json &j, RankingConfig &c) {
     ensureKnownKeys(j, "ranking",
                     {"similarity_weight", "quality_weight", "freshness_weight", "popularity_weight",
                      "trending_weight", "creator_affinity_weight", "exploration_weight",
-                     "repetition_penalty"});
+                     "repetition_penalty", "duration_match_weight", "impression_penalty_weight",
+                     "freshness_half_life_seconds", "trending_half_life_seconds"});
     readKey(j, "similarity_weight", c.similarityWeight);
     readKey(j, "quality_weight", c.qualityWeight);
     readKey(j, "freshness_weight", c.freshnessWeight);
@@ -119,6 +129,10 @@ void from_json(const json &j, RankingConfig &c) {
     readKey(j, "creator_affinity_weight", c.creatorAffinityWeight);
     readKey(j, "exploration_weight", c.explorationWeight);
     readKey(j, "repetition_penalty", c.repetitionPenalty);
+    readKey(j, "duration_match_weight", c.durationMatchWeight);
+    readKey(j, "impression_penalty_weight", c.impressionPenaltyWeight);
+    readKey(j, "freshness_half_life_seconds", c.freshnessHalfLifeSeconds);
+    readKey(j, "trending_half_life_seconds", c.trendingHalfLifeSeconds);
 }
 
 void to_json(json &j, const LearningConfig &c) {

@@ -68,11 +68,21 @@ TEST(RecommenderFactoryTest, HnswExposesRetrievalIndex) {
     EXPECT_EQ(rec->retrievalIndex()->size(), fx.reels.size());
 }
 
+TEST(RecommenderFactoryTest, HnswRankerConstructsAndExposesRetrievalIndex) {
+    Fixture fx;
+    // Delivered in Phase 6: dispatches to HNSWRankerRecommender with the TDD 18.1 hook wired.
+    auto rec = rr::makeRecommender(rr::RecommendationAlgorithm::HnswRanker, fx.deps(), rr::Rng(1));
+    ASSERT_NE(rec, nullptr);
+    EXPECT_EQ(rec->name(), "hnsw_ranker");
+    ASSERT_NE(rec->retrievalIndex(), nullptr);
+    EXPECT_EQ(rec->retrievalIndex()->size(), fx.reels.size());
+}
+
 TEST(RecommenderFactoryTest, UnimplementedAlgorithmsThrowInvalidArgument) {
     Fixture fx;
-    // The ranker/diversity/exploration variants still arrive in Phases 6/8/9.
+    // The diversity/exploration variants still arrive in Phases 8/9.
     for (const rr::RecommendationAlgorithm algo :
-         {rr::RecommendationAlgorithm::HnswRanker, rr::RecommendationAlgorithm::HnswRankerDiversity,
+         {rr::RecommendationAlgorithm::HnswRankerDiversity,
           rr::RecommendationAlgorithm::HnswRankerExploration}) {
         EXPECT_THROW(rr::makeRecommender(algo, fx.deps(), rr::Rng(1)), std::invalid_argument);
     }

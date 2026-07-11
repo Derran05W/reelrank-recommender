@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "rr/domain/candidate.hpp"
@@ -29,6 +31,13 @@ struct RankedReel {
     float score;
     size_t rank;
     std::vector<CandidateSource> sources;
+    // Per-feature ranking contributions (TDD 14.4), copied off the winning Candidate so per-item
+    // explanations reach apps/tests. Appended LAST with a default member initializer so the
+    // pre-Phase-6 positional aggregate initializers (RankedReel{id, score, rank, sources}) stay
+    // valid AND warning-clean under -Wmissing-field-initializers (the default initializer exempts
+    // an omitted trailing member from that warning; RankedReel stays an aggregate in C++20). Empty
+    // on the nullptr-ranker (identity) orchestrator path; populated on the ranked path.
+    std::unordered_map<std::string, float> featureContributions{};
 };
 
 struct RecommendationResponse {

@@ -32,8 +32,10 @@ class Simulator {
   public:
     // `rng` is forked by the caller on the "behaviour" stream (D8); the Simulator owns it from
     // here on. `recentWindow` bounds User::recentInteractions (LearningConfig.recentWindow).
+    // `trendingHalfLifeSeconds` is the half-life (RankingConfig.trendingHalfLifeSeconds) used to
+    // decay each reel's trending accumulators forward on every impression (TDD 12.4).
     Simulator(const BehaviourConfig &behaviour, const RewardConfig &reward, Rng rng,
-              uint32_t recentWindow);
+              uint32_t recentWindow, double trendingHalfLifeSeconds);
 
     // Simulate `user` being shown `reel`. Mutates `reel` counters and `user` bookkeeping;
     // advances the logical clock. HiddenUserState is read-only here and only ever handed to the
@@ -60,6 +62,7 @@ class Simulator {
     RewardModel reward_;
     Rng rng_;
     uint32_t recentWindow_;
+    double trendingHalfLifeSeconds_;
     Timestamp now_ = 0;
     std::unordered_map<UserId, SessionState> sessions_;
 };

@@ -15,6 +15,7 @@
 #include "rr/domain/recommendation.hpp"
 #include "rr/domain/reel.hpp"
 #include "rr/domain/user.hpp"
+#include "rr/recommendation/ranker.hpp"
 
 namespace {
 
@@ -73,6 +74,36 @@ std::vector<uint32_t> feedIds(const rr::RecommendationResponse &response) {
 
 bool hasSource(const rr::RankedReel &r, rr::CandidateSource s) {
     return std::find(r.sources.begin(), r.sources.end(), s) != r.sources.end();
+}
+
+// A Ranker that lets the ranker PATH be tested without any real feature math: it stamps a
+// distinctive score (100 + reelId) and a single "fake" contribution on each candidate, and returns
+// them in ASCENDING retrieval-similarity order — the REVERSE of the orchestrator's identity path,
+// so honouring the ranker's order is observable.
+class FakeRanker final : public rr::Ranker {
+  public:
+    std::vector<rr::Candidate> rank(const rr::User &, const std::vector<rr::Candidate> &candidates,
+                                    rr::Timestamp) const override {
+        std::vector<rr::Candidate> out = candidates;
+        for (rr::Candidate &c : out) {
+            c.rankingScore = 100.0f + static_cast<float>(c.reelId.value);
+            c.featureContributions = {{"fake", c.rankingScore}};
+        }
+        std::sort(out.begin(), out.end(), [](const rr::Candidate &a, const rr::Candidate &b) {
+            return a.retrievalSimilarity < b.retrievalSimilarity; // least relevant first
+        });
+        return out;
+    }
+};
+
+const rr::RankedReel &feedById(const rr::RecommendationResponse &response, uint32_t id) {
+    for (const rr::RankedReel &r : response.reels) {
+        if (r.reelId.value == id) {
+            return r;
+        }
+    }
+    ADD_FAILURE() << "reel " << id << " missing from feed";
+    return response.reels.front();
 }
 
 } // namespace
@@ -205,4 +236,74 @@ TEST(OrchestratorTest, CandidateCountsAndLatencyFieldsPopulated) {
     EXPECT_GE(response.rankingLatencyMs, 0.0);
     EXPECT_GE(response.rerankingLatencyMs, 0.0);
     EXPECT_GE(response.totalLatencyMs, response.retrievalLatencyMs);
+}
+
+TEST(OrchestratorTest, NullptrRankerLeavesContributionsEmpty) {
+    std::vector<rr::Reel> reels = makeReels(2);
+    FakeSource src({cand(0, rr::CandidateSource::VectorHNSW, 0.1f, 0.9f),
+                    cand(1, rr::CandidateSource::VectorHNSW, 0.2f, 0.8f)});
+    rr::Orchestrator orch({&src}, reels); // nullptr ranker (default)
+    rr::User user{};
+
+    const rr::RecommendationResponse response = orch.recommend(user, request(10, 10));
+    ASSERT_EQ(response.reels.size(), 2u);
+    for (const rr::RankedReel &r : response.reels) {
+        EXPECT_TRUE(r.featureContributions.empty());
+    }
+}
+
+TEST(OrchestratorTest, RankerPathHonoursRankerOrderAndScore) {
+    // Identity path would order [0,1,2] by descending similarity; the FakeRanker returns ascending
+    // similarity, so the feed must be [2,1,0] and each score == 100 + reelId.
+    std::vector<rr::Reel> reels = makeReels(3);
+    FakeSource src({cand(0, rr::CandidateSource::VectorHNSW, 0.1f, 0.9f),
+                    cand(1, rr::CandidateSource::VectorHNSW, 0.2f, 0.8f),
+                    cand(2, rr::CandidateSource::VectorHNSW, 0.3f, 0.7f)});
+    FakeRanker ranker;
+    rr::Orchestrator orch({&src}, reels, &ranker);
+    rr::User user{};
+
+    const rr::RecommendationResponse response = orch.recommend(user, request(10, 10));
+    EXPECT_EQ(feedIds(response), (std::vector<uint32_t>{2, 1, 0}));
+    EXPECT_FLOAT_EQ(response.reels[0].score, 102.0f);
+    EXPECT_FLOAT_EQ(response.reels[1].score, 101.0f);
+    EXPECT_FLOAT_EQ(response.reels[2].score, 100.0f);
+    for (std::size_t i = 0; i < response.reels.size(); ++i) {
+        EXPECT_EQ(response.reels[i].rank, i); // ranks 0..n-1 in feed order
+    }
+    EXPECT_GE(response.rankingLatencyMs, 0.0); // ranking latency populated on the ranker path
+    EXPECT_EQ(response.candidatesRanked, 3u);
+}
+
+TEST(OrchestratorTest, RankerPathPropagatesContributions) {
+    std::vector<rr::Reel> reels = makeReels(2);
+    FakeSource src({cand(0, rr::CandidateSource::VectorHNSW, 0.1f, 0.9f),
+                    cand(1, rr::CandidateSource::VectorHNSW, 0.2f, 0.8f)});
+    FakeRanker ranker;
+    rr::Orchestrator orch({&src}, reels, &ranker);
+    rr::User user{};
+
+    const rr::RecommendationResponse response = orch.recommend(user, request(10, 10));
+    const rr::RankedReel &reel1 = feedById(response, 1);
+    ASSERT_EQ(reel1.featureContributions.count("fake"), 1u);
+    EXPECT_FLOAT_EQ(reel1.featureContributions.at("fake"), 101.0f);
+    EXPECT_FLOAT_EQ(reel1.featureContributions.at("fake"), reel1.score);
+}
+
+TEST(OrchestratorTest, RankerPathPreservesMultiSourceLabels) {
+    // reel 0 is produced by two sources; after ranking the RankedReel must still carry BOTH labels
+    // (the Candidate handed to the ranker only carries the first label).
+    std::vector<rr::Reel> reels = makeReels(2);
+    FakeSource hnsw({cand(0, rr::CandidateSource::VectorHNSW, 0.3f, 0.9f),
+                     cand(1, rr::CandidateSource::VectorHNSW, 0.4f, 0.6f)});
+    FakeSource exact({cand(0, rr::CandidateSource::VectorExact, 0.3f, 0.9f)});
+    FakeRanker ranker;
+    rr::Orchestrator orch({&hnsw, &exact}, reels, &ranker);
+    rr::User user{};
+
+    const rr::RecommendationResponse response = orch.recommend(user, request(10, 10));
+    const rr::RankedReel &reel0 = feedById(response, 0);
+    EXPECT_EQ(reel0.sources.size(), 2u);
+    EXPECT_TRUE(hasSource(reel0, rr::CandidateSource::VectorHNSW));
+    EXPECT_TRUE(hasSource(reel0, rr::CandidateSource::VectorExact));
 }

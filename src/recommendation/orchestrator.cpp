@@ -38,8 +38,8 @@ bool moreRelevant(const MergedCandidate &a, const MergedCandidate &b) {
 } // namespace
 
 Orchestrator::Orchestrator(std::vector<CandidateGenerator *> sources,
-                           const std::vector<Reel> &reels)
-    : sources_(std::move(sources)), reels_(reels) {}
+                           const std::vector<Reel> &reels, const Ranker *ranker)
+    : sources_(std::move(sources)), reels_(reels), ranker_(ranker) {}
 
 RecommendationResponse Orchestrator::recommend(const User &user,
                                                const RecommendationRequest &request) {
@@ -111,26 +111,83 @@ RecommendationResponse Orchestrator::recommend(const User &user,
     }
     response.candidatesRanked = pool.size();
 
-    // --- Ranking stage = identity for Phase 5 (TDD 16.4): order the capped pool by similarity.
-    // This sort is the measured ranking latency.
+    const std::size_t feedSize = static_cast<std::size_t>(request.feedSize);
+
+    if (ranker_ == nullptr) {
+        // --- Ranking stage = IDENTITY (Phase 5, TDD 16.4): order the capped pool by similarity.
+        // This sort is the measured ranking latency. Byte-for-byte the pre-Phase-6 behaviour, so
+        // every existing test passes unchanged and featureContributions stays empty.
+        Stopwatch ranking;
+        std::sort(pool.begin(), pool.end(), moreRelevant);
+        response.rankingLatencyMs = ranking.elapsedMs();
+
+        // --- Reranking stage = identity (no diversity yet). Measured anyway (~0) so the latency
+        // field is populated for every request (diversity lands in Phase 9).
+        Stopwatch reranking;
+        response.rerankingLatencyMs = reranking.elapsedMs();
+
+        // --- Truncate to the feed size, assign ranks 0..n-1, score = similarity, propagate the
+        // label vector into each RankedReel (multi-label per TDD 8.5/8.7). The 4-field aggregate
+        // init leaves featureContributions default-empty.
+        const std::size_t feedCount = std::min(feedSize, pool.size());
+        response.reels.reserve(feedCount);
+        for (std::size_t i = 0; i < feedCount; ++i) {
+            MergedCandidate &m = pool[i];
+            response.reels.push_back(
+                RankedReel{m.reelId, m.retrievalSimilarity, i, std::move(m.sources)});
+        }
+
+        response.totalLatencyMs = total.elapsedMs();
+        return response;
+    }
+
+    // --- Ranking stage = the pluggable second-stage Ranker (Phase 6). Inside the ranking
+    // Stopwatch: materialize the capped pool as std::vector<Candidate> and hand it to the ranker,
+    // which RE-ORDERS (does not change membership). The Candidate carries only the FIRST source
+    // label in the first-seen union order; we keep our own reelId -> full-label bookkeeping so the
+    // complete multi-source label set still reaches each RankedReel after the (possibly reordered)
+    // rank call.
     Stopwatch ranking;
-    std::sort(pool.begin(), pool.end(), moreRelevant);
+    std::unordered_map<ReelId, std::vector<CandidateSource>> labelsById;
+    labelsById.reserve(pool.size());
+    std::vector<Candidate> rankPool;
+    rankPool.reserve(pool.size());
+    for (MergedCandidate &m : pool) {
+        Candidate c{};
+        c.reelId = m.reelId;
+        c.source = m.sources.front(); // FIRST label in the first-seen union order.
+        c.retrievalDistance = m.retrievalDistance;
+        c.retrievalSimilarity = m.retrievalSimilarity;
+        c.rankingScore = 0.0f;
+        rankPool.push_back(std::move(c));
+        labelsById.emplace(m.reelId, std::move(m.sources));
+    }
+    std::vector<Candidate> ranked = ranker_->rank(user, rankPool, request.requestTime);
     response.rankingLatencyMs = ranking.elapsedMs();
 
-    // --- Reranking stage = identity in Phase 5 (no diversity yet). Measured anyway (~0) so the
-    // latency field is populated for every request (diversity lands in Phase 9).
+    // --- Reranking stage = identity (no diversity yet). Measured (~0) for field completeness.
     Stopwatch reranking;
     response.rerankingLatencyMs = reranking.elapsedMs();
 
-    // --- Truncate to the feed size, assign ranks 0..n-1, score = similarity, propagate the label
-    // vector into each RankedReel (multi-label per TDD 8.5/8.7).
-    const std::size_t feedSize = static_cast<std::size_t>(request.feedSize);
-    const std::size_t feedCount = std::min(feedSize, pool.size());
+    // --- Truncate to the feed size in the ranker's returned order; assign ranks 0..n-1, score =
+    // the candidate's rankingScore, move featureContributions off the candidate, and restore the
+    // FULL merged label set from our bookkeeping (falling back to the candidate's single label if,
+    // impossibly, the ranker returned an id we did not send).
+    const std::size_t feedCount = std::min(feedSize, ranked.size());
     response.reels.reserve(feedCount);
     for (std::size_t i = 0; i < feedCount; ++i) {
-        MergedCandidate &m = pool[i];
-        response.reels.push_back(
-            RankedReel{m.reelId, m.retrievalSimilarity, i, std::move(m.sources)});
+        Candidate &c = ranked[i];
+        RankedReel rr{};
+        rr.reelId = c.reelId;
+        rr.score = c.rankingScore;
+        rr.rank = i;
+        if (auto it = labelsById.find(c.reelId); it != labelsById.end()) {
+            rr.sources = std::move(it->second);
+        } else {
+            rr.sources = {c.source};
+        }
+        rr.featureContributions = std::move(c.featureContributions);
+        response.reels.push_back(std::move(rr));
     }
 
     response.totalLatencyMs = total.elapsedMs();

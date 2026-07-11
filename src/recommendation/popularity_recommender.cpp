@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "rr/domain/candidate.hpp"
+#include "rr/recommendation/scoring.hpp"
 #include "rr/recommendation/seen_filter.hpp"
 
 namespace rr {
@@ -28,13 +29,7 @@ RecommendationResponse PopularityRecommender::recommend(const RecommendationRequ
 
     // Prior mean m = global engagement / global impressions over the current live counters,
     // falling back to 0 before any impression exists (TDD 12.3 Bayesian smoothing).
-    double totalEngagement = 0.0;
-    double totalImpressions = 0.0;
-    for (const Reel &reel : reels_) {
-        totalEngagement += popularityEngagement(reel);
-        totalImpressions += static_cast<double>(reel.impressionCount);
-    }
-    const double priorMean = totalImpressions > 0.0 ? totalEngagement / totalImpressions : 0.0;
+    const double priorMean = engagementPriorMean(reels_);
 
     // Score every eligible reel; rank by descending score, ties by ascending ReelId (so an
     // all-zero cold-start feed is the first feedSize reels in id order - fully deterministic).
