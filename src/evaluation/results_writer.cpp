@@ -41,6 +41,26 @@ const char *kBaselineFlagsNote =
     "recommendation.vectorCandidates; requestTime = simulator logical clock; sessionId = the most "
     "recent interaction's session (SessionId{0} before any interaction).";
 
+const char *kRetrievalNote =
+    "Live retrieval quality (TDD 18.1) on a Bernoulli(retrieval_sample_rate) subset of requests: "
+    "the recommender's ANN index is compared against an exact ground-truth index over the active "
+    "reels for the same query, at k=50. Recall@K = |ANN_K intersect Exact_K| / min(K, corpus); "
+    "Recall@10 uses the first 10 results. Distance error is the mean positionwise "
+    "|d_ann,i - d_exact,i| over the first 10 results. Values are deterministic (exact searches). "
+    "For an exact recommender this measures exactly recall 1.0 / distance error 0.0 (a wiring "
+    "self-check).";
+
+const char *kRetrievalNotApplicableNote =
+    "The algorithm is not vector-based (retrievalIndex() == nullptr), so no live retrieval metrics "
+    "are computed; retrieval_metrics.csv is still written with zero-sample rows for a uniform "
+    "layout.";
+
+// p50/p95/p99/mean/max/samples of a LatencyStats as a JSON object (wall-clock, D9).
+nlohmann::json latencyJson(const LatencyStats &l) {
+    return nlohmann::json{{"p50", l.p50Ms},   {"p95", l.p95Ms}, {"p99", l.p99Ms},
+                          {"mean", l.meanMs}, {"max", l.maxMs}, {"samples", l.samples}};
+}
+
 } // namespace
 
 void ResultsWriter::writeConfigJson(const ExperimentResult &result) {
@@ -80,22 +100,43 @@ void ResultsWriter::writeSummaryJson(const ExperimentResult &result) {
                    {"cumulative_regret", result.cumulativeRegret},
                    {"regret_units_note", kRegretUnitsNote}};
 
+    // Live retrieval quality (TDD 18.1). Deterministic (exact index searches), unlike the timing
+    // subsection below. `note` explains whether metrics were computed for this algorithm.
+    j["retrieval"] = {
+        {"applicable", result.retrievalApplicable},
+        {"sample_rate", result.retrievalSampleRate},
+        {"sampled_requests", result.retrievalSampleCount},
+        {"recall_at_10", result.retrievalRecallAt10},
+        {"recall_at_50", result.retrievalRecallAt50},
+        {"mean_distance_error", result.retrievalDistanceError},
+        {"note", result.retrievalApplicable ? kRetrievalNote : kRetrievalNotApplicableNote}};
+
     j["notes"] = {{"static_estimates", kStaticEstimatesNote},
                   {"baseline_flags", kBaselineFlagsNote}};
 
     // Wall-clock timing is confined to this subsection + latency_metrics.csv + metadata.json; it is
-    // intentionally NOT part of the determinism guarantee (D9).
+    // intentionally NOT part of the determinism guarantee (D9). The per-stage stats decompose the
+    // recommend() call (TDD 18.7); they are all-zero for recommenders that do not populate the
+    // per-stage response fields (Random/Popularity).
     j["timing"] = {{"total_wall_seconds", result.totalWallSeconds},
-                   {"recommend_latency_ms",
-                    {{"p50", result.latency.p50Ms},
-                     {"p95", result.latency.p95Ms},
-                     {"p99", result.latency.p99Ms},
-                     {"mean", result.latency.meanMs},
-                     {"max", result.latency.maxMs},
-                     {"samples", result.latency.samples}}}};
+                   {"recommend_latency_ms", latencyJson(result.latency)},
+                   {"retrieval_latency_ms", latencyJson(result.retrievalLatency)},
+                   {"ranking_latency_ms", latencyJson(result.rankingLatency)},
+                   {"reranking_latency_ms", latencyJson(result.rerankingLatency)}};
 
     std::ofstream out(result.directory / "summary.json");
     out << j.dump(2) << "\n";
+}
+
+void ResultsWriter::writeRetrievalMetricsCsv(const ExperimentResult &result) {
+    // Deterministic (exact index searches): part of the byte-identical determinism guarantee.
+    // 0-sample rounds (and every round of a non-vector algorithm) write zeros for a uniform layout.
+    std::ofstream csv(result.directory / "retrieval_metrics.csv");
+    csv << "round,samples,recall_at_10,recall_at_50,mean_distance_error\n";
+    for (const RoundMetrics &r : result.rounds) {
+        csv << r.round << ',' << r.retrievalSamples << ',' << num(r.meanRecallAt10) << ','
+            << num(r.meanRecallAt50) << ',' << num(r.meanDistanceError) << '\n';
+    }
 }
 
 void ResultsWriter::writeRecommendationMetricsCsv(const ExperimentResult &result) {
@@ -132,18 +173,26 @@ void ResultsWriter::writeRegretCurveCsv(const ExperimentResult &result) {
 }
 
 void ResultsWriter::writeLatencyMetricsCsv(const ExperimentResult &result) {
-    // Wall-clock file: NOT part of the determinism guarantee.
+    // Wall-clock file: NOT part of the determinism guarantee. Long format, one row per stage: the
+    // whole recommend() call ("total") plus its retrieval/ranking/reranking decomposition (TDD 18.7
+    // / Phase 5 stage-percentile exit criterion). Stage rows are all-zero for recommenders that do
+    // not populate the per-stage response fields (Random/Popularity).
     std::ofstream csv(result.directory / "latency_metrics.csv");
-    csv << "recommend_p50_ms,recommend_p95_ms,recommend_p99_ms,recommend_mean_ms,recommend_max_ms,"
-           "num_samples\n";
-    const LatencyStats &l = result.latency;
-    csv << num(l.p50Ms) << ',' << num(l.p95Ms) << ',' << num(l.p99Ms) << ',' << num(l.meanMs) << ','
-        << num(l.maxMs) << ',' << l.samples << '\n';
+    csv << "stage,p50_ms,p95_ms,p99_ms,mean_ms,max_ms,num_samples\n";
+    const auto row = [&csv](const char *stage, const LatencyStats &l) {
+        csv << stage << ',' << num(l.p50Ms) << ',' << num(l.p95Ms) << ',' << num(l.p99Ms) << ','
+            << num(l.meanMs) << ',' << num(l.maxMs) << ',' << l.samples << '\n';
+    };
+    row("total", result.latency);
+    row("retrieval", result.retrievalLatency);
+    row("ranking", result.rankingLatency);
+    row("reranking", result.rerankingLatency);
 }
 
 void ResultsWriter::writeAll(const ExperimentResult &result, const RunMetadata &meta) {
     writeConfigJson(result);
     writeSummaryJson(result);
+    writeRetrievalMetricsCsv(result);
     writeRecommendationMetricsCsv(result);
     writeLearningCurveCsv(result);
     writeRegretCurveCsv(result);

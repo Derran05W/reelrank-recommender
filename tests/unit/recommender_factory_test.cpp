@@ -11,6 +11,7 @@
 #include "rr/domain/user.hpp"
 #include "rr/infrastructure/config.hpp"
 #include "rr/infrastructure/random.hpp"
+#include "rr/recommendation/vector_index.hpp"
 
 namespace {
 
@@ -49,20 +50,29 @@ struct Fixture {
 
 TEST(RecommenderFactoryTest, NamesMatchToStringForImplementedAlgorithms) {
     Fixture fx;
+    // Hnsw joins the baselines in Phase 5.
     for (const rr::RecommendationAlgorithm algo :
          {rr::RecommendationAlgorithm::Random, rr::RecommendationAlgorithm::Popularity,
-          rr::RecommendationAlgorithm::ExactVector}) {
+          rr::RecommendationAlgorithm::ExactVector, rr::RecommendationAlgorithm::Hnsw}) {
         auto rec = rr::makeRecommender(algo, fx.deps(), rr::Rng(1));
         ASSERT_NE(rec, nullptr);
         EXPECT_EQ(rec->name(), rr::toString(algo));
     }
 }
 
+TEST(RecommenderFactoryTest, HnswExposesRetrievalIndex) {
+    Fixture fx;
+    auto rec = rr::makeRecommender(rr::RecommendationAlgorithm::Hnsw, fx.deps(), rr::Rng(1));
+    ASSERT_NE(rec, nullptr);
+    ASSERT_NE(rec->retrievalIndex(), nullptr); // evaluation hook wired (TDD 18.1)
+    EXPECT_EQ(rec->retrievalIndex()->size(), fx.reels.size());
+}
+
 TEST(RecommenderFactoryTest, UnimplementedAlgorithmsThrowInvalidArgument) {
     Fixture fx;
+    // The ranker/diversity/exploration variants still arrive in Phases 6/8/9.
     for (const rr::RecommendationAlgorithm algo :
-         {rr::RecommendationAlgorithm::Hnsw, rr::RecommendationAlgorithm::HnswRanker,
-          rr::RecommendationAlgorithm::HnswRankerDiversity,
+         {rr::RecommendationAlgorithm::HnswRanker, rr::RecommendationAlgorithm::HnswRankerDiversity,
           rr::RecommendationAlgorithm::HnswRankerExploration}) {
         EXPECT_THROW(rr::makeRecommender(algo, fx.deps(), rr::Rng(1)), std::invalid_argument);
     }

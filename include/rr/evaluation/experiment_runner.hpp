@@ -20,6 +20,13 @@ struct RoundMetrics {
     size_t sampledRequests = 0; // requests whose Bernoulli(oracleSampleRate) draw fired this round
     double meanRegret = 0.0;    // mean regret over this round's sampled requests (0 if none)
     double cumulativeRegret = 0.0; // running sum of sampled-request regret through this round
+
+    // Live retrieval metrics (TDD 18.1), means over this round's Bernoulli(retrievalSampleRate)
+    // samples; all 0 for a 0-sample round or a non-vector algorithm (documented in output).
+    size_t retrievalSamples = 0;
+    double meanRecallAt10 = 0.0;
+    double meanRecallAt50 = 0.0;
+    double meanDistanceError = 0.0;
 };
 
 // Everything one experiment produced, in memory. The ResultsWriter serializes it to disk; the
@@ -42,10 +49,26 @@ struct ExperimentResult {
     double meanRegret = 0.0;
     double cumulativeRegret = 0.0;
 
+    // Live retrieval metrics (TDD 18.1). `retrievalApplicable` is true iff the recommender is
+    // vector-based (retrievalIndex() != nullptr); when false, no samples are taken and a note is
+    // written. Overall recall/distance-error are means over all sampled requests (0 if none).
+    bool retrievalApplicable = false;
+    double retrievalSampleRate = 0.0;
+    size_t retrievalSampleCount = 0;
+    double retrievalRecallAt10 = 0.0;
+    double retrievalRecallAt50 = 0.0;
+    double retrievalDistanceError = 0.0;
+
     std::vector<RoundMetrics> rounds;
 
     // Wall-clock, confined to summary.timing + latency_metrics.csv (D9/D8 determinism carve-out).
+    // `latency` is the whole recommend() call; the three stage stats decompose it (TDD 18.7 /
+    // Phase 5 exit criterion). Stage stats are all-zero for recommenders that do not populate the
+    // per-stage response fields (Random/Popularity).
     LatencyStats latency;
+    LatencyStats retrievalLatency;
+    LatencyStats rankingLatency;
+    LatencyStats rerankingLatency;
     double totalWallSeconds = 0.0;
 };
 

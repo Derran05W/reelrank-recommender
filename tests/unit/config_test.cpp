@@ -106,10 +106,12 @@ TEST(ConfigTest, UnknownNestedKeyThrows) {
 
 TEST(ConfigTest, EvaluationBlockParsesAndRejectsUnknownKeys) {
     EXPECT_DOUBLE_EQ(ExperimentConfig{}.evaluation.oracleSampleRate, 0.05);
+    EXPECT_DOUBLE_EQ(ExperimentConfig{}.evaluation.retrievalSampleRate, 0.02);
 
-    json j = {{"evaluation", {{"oracle_sample_rate", 0.25}}}};
+    json j = {{"evaluation", {{"oracle_sample_rate", 0.25}, {"retrieval_sample_rate", 0.1}}}};
     auto c = j.get<ExperimentConfig>();
     EXPECT_DOUBLE_EQ(c.evaluation.oracleSampleRate, 0.25);
+    EXPECT_DOUBLE_EQ(c.evaluation.retrievalSampleRate, 0.1);
 
     json bad = {{"evaluation", {{"oracle_rate", 0.25}}}};
     try {

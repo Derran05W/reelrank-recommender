@@ -110,6 +110,10 @@ struct DiversityConfig {
 // rate is config-driven and recorded in every experiment's output.
 struct EvaluationConfig {
     double oracleSampleRate = 0.05;
+    // TDD 18.1 live retrieval metrics (Phase 5): fraction of requests on which the harness
+    // compares the recommender's vector index against exact ground truth (Recall@K, distance
+    // error). Exact search over the full corpus per sample keeps this a sampled measurement.
+    double retrievalSampleRate = 0.02;
     bool operator==(const EvaluationConfig &) const = default;
 };
 

@@ -214,12 +214,14 @@ void from_json(const json &j, RewardConfig &c) {
 }
 
 void to_json(json &j, const EvaluationConfig &c) {
-    j = json{{"oracle_sample_rate", c.oracleSampleRate}};
+    j = json{{"oracle_sample_rate", c.oracleSampleRate},
+             {"retrieval_sample_rate", c.retrievalSampleRate}};
 }
 
 void from_json(const json &j, EvaluationConfig &c) {
-    ensureKnownKeys(j, "evaluation", {"oracle_sample_rate"});
+    ensureKnownKeys(j, "evaluation", {"oracle_sample_rate", "retrieval_sample_rate"});
     readKey(j, "oracle_sample_rate", c.oracleSampleRate);
+    readKey(j, "retrieval_sample_rate", c.retrievalSampleRate);
 }
 
 const char *toString(RecommendationAlgorithm a) {

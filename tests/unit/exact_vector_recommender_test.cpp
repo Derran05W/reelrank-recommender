@@ -164,3 +164,38 @@ TEST(ExactVectorRecommenderTest, NameIsExactVector) {
     rr::ExactVectorRecommender rec(deps, rr::Rng(0));
     EXPECT_EQ(rec.name(), "exact_vector");
 }
+
+// The recommender populates all four latency fields (Phase 5 task 3). reranking is always 0.0
+// (no reranking stage); the others are non-negative and total encloses retrieval + ranking.
+TEST(ExactVectorRecommenderTest, PopulatesPerStageLatencies) {
+    const std::vector<rr::Reel> reels = orientedReels();
+    const std::vector<rr::User> users{makeUser({1.0f, 0.0f})};
+    const rr::ExperimentConfig config = config2d();
+    const rr::RecommenderDeps deps{reels, users, config};
+
+    rr::ExactVectorRecommender rec(deps, rr::Rng(0));
+    const rr::RecommendationResponse response = rec.recommend(request(4));
+
+    EXPECT_GE(response.retrievalLatencyMs, 0.0);
+    EXPECT_GE(response.rankingLatencyMs, 0.0);
+    EXPECT_DOUBLE_EQ(response.rerankingLatencyMs, 0.0);
+    EXPECT_GE(response.totalLatencyMs, response.retrievalLatencyMs);
+    EXPECT_GE(response.totalLatencyMs, response.rankingLatencyMs);
+    EXPECT_EQ(response.candidatesRetrieved, 4u);
+    EXPECT_EQ(response.candidatesRanked, response.reels.size());
+}
+
+// The evaluation hook exposes the recommender's own exact index (TDD 18.1), sized to the active
+// reels. Random/Popularity return nullptr; this recommender must not.
+TEST(ExactVectorRecommenderTest, RetrievalIndexExposesActiveReelIndex) {
+    std::vector<rr::Reel> reels = orientedReels();
+    reels[3].active = false; // one inactive reel -> excluded from the index
+    const std::vector<rr::User> users{makeUser({1.0f, 0.0f})};
+    const rr::ExperimentConfig config = config2d();
+    const rr::RecommenderDeps deps{reels, users, config};
+
+    rr::ExactVectorRecommender rec(deps, rr::Rng(0));
+    const rr::VectorIndex *index = rec.retrievalIndex();
+    ASSERT_NE(index, nullptr);
+    EXPECT_EQ(index->size(), 3u); // 3 active reels indexed
+}

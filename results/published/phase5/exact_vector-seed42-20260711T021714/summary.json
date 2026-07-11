@@ -1,0 +1,81 @@
+{
+  "algorithm": "exact_vector",
+  "counts": {
+    "impressions": 2000000,
+    "reels": 100000,
+    "requests": 200000,
+    "rounds": 20,
+    "sessions": 123125,
+    "users": 10000
+  },
+  "experiment_id": "exact_vector-seed42-20260711T021714",
+  "metrics": {
+    "completion_rate": 0.3234735,
+    "follow_rate": 0.008703,
+    "instant_skip_rate": 0.555847,
+    "like_rate": 0.061803,
+    "mean_session_length": 16.243654822335024,
+    "mean_true_affinity": 0.10786834042802909,
+    "mean_watch_ratio": 0.36250815350993876,
+    "mean_watch_seconds": 14.173926041309873,
+    "reward_per_impression": 0.02766090495841384,
+    "reward_per_session": 0.4493141922178898,
+    "share_rate": 0.022843
+  },
+  "notes": {
+    "baseline_flags": "Baseline requests set enableExploration=false and enableDiversity=false; candidateLimit = recommendation.vectorCandidates; requestTime = simulator logical clock; sessionId = the most recent interaction's session (SessionId{0} before any interaction).",
+    "static_estimates": "Baselines run with STATIC cold-start estimated preferences (TDD 11.1): every user's estimatedPreference is the global-average hidden preference and there are no online updates until Phase 7. Reported metrics therefore reflect fixed, non-personalized-per-user estimates; a flat learning curve is expected."
+  },
+  "oracle": {
+    "cumulative_regret": 2665.947825340545,
+    "mean_regret": 0.6757789164361331,
+    "regret_units_note": "Regret is measured in TRUE-AFFINITY units, not reward units: simulating counterfactual oracle interactions would consume behaviour rng draws and perturb determinism (D8), so the oracle compares mean true affinity of its exhaustive top-k against the recommended feed. Affinity is the monotone core of the reward (TDD 10.1/10.5).",
+    "sample_rate": 0.02,
+    "sampled_requests": 3945
+  },
+  "retrieval": {
+    "applicable": true,
+    "mean_distance_error": 0.0,
+    "note": "Live retrieval quality (TDD 18.1) on a Bernoulli(retrieval_sample_rate) subset of requests: the recommender's ANN index is compared against an exact ground-truth index over the active reels for the same query, at k=50. Recall@K = |ANN_K intersect Exact_K| / min(K, corpus); Recall@10 uses the first 10 results. Distance error is the mean positionwise |d_ann,i - d_exact,i| over the first 10 results. Values are deterministic (exact searches). For an exact recommender this measures exactly recall 1.0 / distance error 0.0 (a wiring self-check).",
+    "recall_at_10": 1.0,
+    "recall_at_50": 1.0,
+    "sample_rate": 0.02,
+    "sampled_requests": 4093
+  },
+  "seed": 42,
+  "timing": {
+    "ranking_latency_ms": {
+      "max": 0.1465,
+      "mean": 0.0015568885399999052,
+      "p50": 0.001458,
+      "p95": 0.002792,
+      "p99": 0.0045,
+      "samples": 200000
+    },
+    "recommend_latency_ms": {
+      "max": 756957.267708,
+      "mean": 14.204460111540122,
+      "p50": 6.327125,
+      "p95": 8.920583,
+      "p99": 9.783708420000002,
+      "samples": 200000
+    },
+    "reranking_latency_ms": {
+      "max": 0.0,
+      "mean": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "p99": 0.0,
+      "samples": 200000
+    },
+    "retrieval_latency_ms": {
+      "max": 756957.257834,
+      "mean": 14.20269933734503,
+      "p50": 6.325458,
+      "p95": 8.918377049999998,
+      "p99": 9.78054225,
+      "samples": 200000
+    },
+    "total_wall_seconds": 2920.832335125
+  }
+}

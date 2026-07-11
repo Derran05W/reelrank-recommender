@@ -4,6 +4,7 @@
 #include <chrono>
 #include <ctime>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -16,10 +17,13 @@
 #include "rr/evaluation/cold_start.hpp"
 #include "rr/evaluation/oracle.hpp"
 #include "rr/evaluation/results_writer.hpp"
+#include "rr/evaluation/retrieval_evaluator.hpp"
 #include "rr/infrastructure/clock.hpp"
 #include "rr/infrastructure/random.hpp"
+#include "rr/recommendation/effective_preference.hpp"
 #include "rr/recommendation/recommender.hpp"
 #include "rr/recommendation/recommender_factory.hpp"
+#include "rr/recommendation/vector_index.hpp"
 #include "rr/simulation/dataset_generator.hpp"
 #include "rr/simulation/simulator.hpp"
 
@@ -68,6 +72,19 @@ ExperimentResult ExperimentRunner::run() {
         makeRecommender(config_.algorithm, deps, forkRng(seed, "recommender"));
     Rng oracleRng = forkRng(seed, "oracle");
 
+    // Live retrieval evaluation (TDD 18.1). Its own INDEPENDENT rng stream (D8) so adding it never
+    // perturbs behaviour/recommender/oracle. Bernoulli(retrievalSampleRate) is drawn for EVERY
+    // request below (like the oracle) to keep the stream aligned across runs; the exact
+    // ground-truth evaluator is built lazily only when the recommender is vector-based AND the rate
+    // is positive.
+    Rng retrievalRng = forkRng(seed, "retrieval");
+    const VectorIndex *annIndex = recommender->retrievalIndex();
+    const bool retrievalApplicable = annIndex != nullptr;
+    std::optional<RetrievalEvaluator> retrievalEval;
+    if (retrievalApplicable && config_.evaluation.retrievalSampleRate > 0.0) {
+        retrievalEval.emplace(config_.simulation.dimensions, ds.reels);
+    }
+
     // 3. Interleaved loop: ceil(interactionsPerUser / feedSize) rounds, each a request per user.
     const size_t feedSize = config_.recommendation.feedSize;
     const size_t interactionsPerUser = config_.simulation.interactionsPerUser;
@@ -80,8 +97,23 @@ ExperimentResult ExperimentRunner::run() {
         double sum = 0.0;
     };
     std::vector<RegretAcc> regretByRound(rounds);
+    struct RetrievalAcc {
+        size_t samples = 0;
+        double recall10Sum = 0.0;
+        double recall50Sum = 0.0;
+        double distErrorSum = 0.0;
+    };
+    std::vector<RetrievalAcc> retrievalByRound(rounds);
+
     std::vector<double> latencies;
-    latencies.reserve(rounds * ds.users.size());
+    std::vector<double> retrievalLatencies;
+    std::vector<double> rankingLatencies;
+    std::vector<double> rerankingLatencies;
+    const size_t latencyReserve = rounds * ds.users.size();
+    latencies.reserve(latencyReserve);
+    retrievalLatencies.reserve(latencyReserve);
+    rankingLatencies.reserve(latencyReserve);
+    rerankingLatencies.reserve(latencyReserve);
 
     std::vector<size_t> doneByUser(ds.users.size(), 0);
     size_t requestCount = 0;
@@ -111,6 +143,11 @@ ExperimentResult ExperimentRunner::run() {
             Stopwatch sw;
             RecommendationResponse resp = recommender->recommend(req);
             latencies.push_back(sw.elapsedMs());
+            // Per-stage latencies come from the response itself (0 for recommenders that do not
+            // populate them, e.g. Random/Popularity). These feed the TDD 18.7 stage percentiles.
+            retrievalLatencies.push_back(resp.retrievalLatencyMs);
+            rankingLatencies.push_back(resp.rankingLatencyMs);
+            rerankingLatencies.push_back(resp.rerankingLatencyMs);
             ++requestCount;
 
             // Oracle sampling: draw for EVERY request so the oracle stream stays aligned across
@@ -129,6 +166,22 @@ ExperimentResult ExperimentRunner::run() {
                                         user.seenReels, feedIds, feedSize);
                 regretByRound[round].sampled += 1;
                 regretByRound[round].sum += oracle.regret;
+            }
+
+            // Retrieval sampling (TDD 18.1): draw for EVERY request (independent stream) so it
+            // stays aligned across runs; evaluate only when the recommender is vector-based. The
+            // evaluator is deterministic and consumes no simulation rng, so it cannot perturb any
+            // stream.
+            const bool retrievalSampled =
+                retrievalRng.bernoulli(config_.evaluation.retrievalSampleRate);
+            if (retrievalSampled && retrievalEval.has_value()) {
+                const RetrievalSample rs =
+                    retrievalEval->evaluate(*annIndex, effectivePreference(user));
+                RetrievalAcc &acc = retrievalByRound[round];
+                acc.samples += 1;
+                acc.recall10Sum += rs.recallAt10;
+                acc.recall50Sum += rs.recallAt50;
+                acc.distErrorSum += rs.distanceError;
             }
 
             // Consume the feed in order, capped so per-user interactions never exceed the budget.
@@ -172,10 +225,16 @@ ExperimentResult ExperimentRunner::run() {
     result.impressionCount = impressionCount;
     result.overall = metrics.overall();
     result.oracleSampleRate = config_.evaluation.oracleSampleRate;
+    result.retrievalApplicable = retrievalApplicable;
+    result.retrievalSampleRate = config_.evaluation.retrievalSampleRate;
 
     double cumulativeRegret = 0.0;
     size_t totalSampled = 0;
     double totalRegretSum = 0.0;
+    size_t totalRetrievalSamples = 0;
+    double totalRecall10Sum = 0.0;
+    double totalRecall50Sum = 0.0;
+    double totalDistErrorSum = 0.0;
     result.rounds.reserve(rounds);
     for (size_t r = 0; r < rounds; ++r) {
         RoundMetrics rm;
@@ -187,16 +246,40 @@ ExperimentResult ExperimentRunner::run() {
                             : 0.0;
         cumulativeRegret += regretByRound[r].sum;
         rm.cumulativeRegret = cumulativeRegret;
+
+        const RetrievalAcc &racc = retrievalByRound[r];
+        rm.retrievalSamples = racc.samples;
+        if (racc.samples > 0) {
+            const double n = static_cast<double>(racc.samples);
+            rm.meanRecallAt10 = racc.recall10Sum / n;
+            rm.meanRecallAt50 = racc.recall50Sum / n;
+            rm.meanDistanceError = racc.distErrorSum / n;
+        }
         result.rounds.push_back(rm);
 
         totalSampled += regretByRound[r].sampled;
         totalRegretSum += regretByRound[r].sum;
+        totalRetrievalSamples += racc.samples;
+        totalRecall10Sum += racc.recall10Sum;
+        totalRecall50Sum += racc.recall50Sum;
+        totalDistErrorSum += racc.distErrorSum;
     }
     result.sampledRequestCount = totalSampled;
     result.meanRegret = totalSampled > 0 ? totalRegretSum / static_cast<double>(totalSampled) : 0.0;
     result.cumulativeRegret = totalRegretSum;
 
+    result.retrievalSampleCount = totalRetrievalSamples;
+    if (totalRetrievalSamples > 0) {
+        const double n = static_cast<double>(totalRetrievalSamples);
+        result.retrievalRecallAt10 = totalRecall10Sum / n;
+        result.retrievalRecallAt50 = totalRecall50Sum / n;
+        result.retrievalDistanceError = totalDistErrorSum / n;
+    }
+
     result.latency = latencyStats(latencies);
+    result.retrievalLatency = latencyStats(retrievalLatencies);
+    result.rankingLatency = latencyStats(rankingLatencies);
+    result.rerankingLatency = latencyStats(rerankingLatencies);
     result.totalWallSeconds = wall.elapsedMs() / 1000.0;
 
     // 5. Write the §26 output layout.

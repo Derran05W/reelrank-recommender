@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "rr/recommendation/exact_vector_recommender.hpp"
+#include "rr/recommendation/hnsw_recommender.hpp"
 #include "rr/recommendation/popularity_recommender.hpp"
 #include "rr/recommendation/random_recommender.hpp"
 
@@ -33,11 +34,11 @@ void validateDenseIds(const RecommenderDeps &deps) {
     }
 }
 
-// The HNSW-based algorithms are not part of Phase 4 (baselines only). Name the algorithm and the
-// phase that delivers it so a misconfigured experiment fails loudly.
+// The ranker/diversity/exploration algorithms are delivered in later phases. Name the algorithm
+// and the phase that delivers it so a misconfigured experiment fails loudly.
 [[noreturn]] void throwUnimplemented(RecommendationAlgorithm algorithm, int phase) {
     throw std::invalid_argument(std::string("makeRecommender: algorithm '") + toString(algorithm) +
-                                "' is not available in Phase 4; it is delivered in Phase " +
+                                "' is not yet implemented; it is delivered in Phase " +
                                 std::to_string(phase));
 }
 
@@ -54,7 +55,7 @@ std::unique_ptr<Recommender> makeRecommender(RecommendationAlgorithm algorithm,
     case RecommendationAlgorithm::ExactVector:
         return std::make_unique<ExactVectorRecommender>(deps, std::move(rng));
     case RecommendationAlgorithm::Hnsw:
-        throwUnimplemented(algorithm, 5); // HNSW retrieval in the loop
+        return std::make_unique<HNSWRecommender>(deps, std::move(rng));
     case RecommendationAlgorithm::HnswRanker:
         throwUnimplemented(algorithm, 6); // learned ranking
     case RecommendationAlgorithm::HnswRankerExploration:

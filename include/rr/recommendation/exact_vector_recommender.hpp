@@ -9,19 +9,13 @@
 #include "rr/domain/reel.hpp"
 #include "rr/domain/user.hpp"
 #include "rr/infrastructure/random.hpp"
+#include "rr/recommendation/effective_preference.hpp"
 #include "rr/recommendation/recommender.hpp"
 #include "rr/recommendation/recommender_factory.hpp"
 #include "rr/recommendation/vector_index.hpp"
 #include "rr/vindex/exact_vector_index.hpp"
 
 namespace rr {
-
-// The query vector a recommender scores a user against. At Phase 4 this is simply the cold-start
-// static estimate (TDD 11.1) - there are no online updates yet. Phase 7 will replace the body
-// with the TDD 8.3 blend longTermWeight*longTermPreference + sessionWeight*sessionPreference;
-// every personalizing recommender routes through this one helper so that upgrade is a single
-// edit.
-inline const Embedding &effectivePreference(const User &user) { return user.estimatedPreference; }
 
 // TDD 16.3 - the personalization ceiling. Brute-force exact nearest-neighbour retrieval over the
 // user's effective preference. The index is built once over all active reels in the constructor
@@ -34,6 +28,11 @@ class ExactVectorRecommender final : public Recommender {
     RecommendationResponse recommend(const RecommendationRequest &request) override;
 
     std::string name() const override;
+
+    // Evaluation hook (TDD 18.1): the exact index this recommender queries IS its own ground truth,
+    // so live exact-vs-exact recall through the harness measures exactly 1.0 recall / 0.0 distance
+    // error — a wiring self-check. Never used on the recommendation path itself.
+    const VectorIndex *retrievalIndex() const override;
 
   private:
     // Walk `results` in ascending-distance order, emit the eligible ones (active + unseen) as

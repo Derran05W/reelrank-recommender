@@ -42,7 +42,7 @@ void printUsage(std::ostream &os) {
           "[--smoke]\n"
           "  --config     experiment config JSON (default: configs/small.json; optional with "
           "--smoke)\n"
-          "  --algorithm  random | popularity | exact_vector (overrides config)\n"
+          "  --algorithm  random | popularity | exact_vector | hnsw (overrides config)\n"
           "  --seed       master random seed (overrides config.simulation.seed)\n"
           "  --out        results root directory (default: results)\n"
           "  --smoke      tiny CI config: 50 users, 500 reels, 25 creators, 8 topics, dim 32, "
@@ -58,6 +58,9 @@ void applySmoke(rr::ExperimentConfig &config) {
     config.simulation.dimensions = 32;
     config.simulation.interactionsPerUser = 10;
     config.evaluation.oracleSampleRate = 0.5;
+    // Sample every request for live retrieval metrics at smoke scale so the exact-vs-exact recall
+    // self-check (recall 1.0 / distance error 0.0) is always exercised for vector algorithms.
+    config.evaluation.retrievalSampleRate = 1.0;
 }
 
 } // namespace
@@ -144,6 +147,16 @@ int main(int argc, char **argv) {
         std::cout << "  mean_true_affinity   " << m.meanTrueAffinity << "\n";
         std::cout << "  mean_regret          " << result.meanRegret << " (over "
                   << result.sampledRequestCount << " sampled requests)\n";
+        // Live retrieval headline (TDD 18.1), only when retrieval samples were taken (vector-based
+        // algorithm with a positive sample rate).
+        if (result.retrievalSampleCount > 0) {
+            std::cout << "  recall@10 / @50      " << result.retrievalRecallAt10 << " / "
+                      << result.retrievalRecallAt50 << "\n";
+            std::cout << "  mean_distance_error  " << result.retrievalDistanceError << "\n";
+            std::cout << "  retrieval p50/p95 ms " << result.retrievalLatency.p50Ms << " / "
+                      << result.retrievalLatency.p95Ms << " (over " << result.retrievalSampleCount
+                      << " sampled requests)\n";
+        }
         std::cout << "  wall_seconds         " << result.totalWallSeconds << "\n";
         return 0;
     } catch (const std::exception &e) {
