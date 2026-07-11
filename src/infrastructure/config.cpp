@@ -165,6 +165,54 @@ void from_json(const json &j, DiversityConfig &c) {
     readKey(j, "mmr_lambda", c.mmrLambda);
 }
 
+void to_json(json &j, const BehaviourConfig &c) {
+    j = json{{"alpha", c.alpha},
+             {"beta", c.beta},
+             {"gamma", c.gamma},
+             {"delta", c.delta},
+             {"noise_std", c.noiseStd},
+             {"skip_bias", c.skipBias},
+             {"not_interested_z", c.notInterestedZ},
+             {"not_interested_prob", c.notInterestedProb}};
+}
+
+void from_json(const json &j, BehaviourConfig &c) {
+    ensureKnownKeys(j, "behaviour",
+                    {"alpha", "beta", "gamma", "delta", "noise_std", "skip_bias",
+                     "not_interested_z", "not_interested_prob"});
+    readKey(j, "alpha", c.alpha);
+    readKey(j, "beta", c.beta);
+    readKey(j, "gamma", c.gamma);
+    readKey(j, "delta", c.delta);
+    readKey(j, "noise_std", c.noiseStd);
+    readKey(j, "skip_bias", c.skipBias);
+    readKey(j, "not_interested_z", c.notInterestedZ);
+    readKey(j, "not_interested_prob", c.notInterestedProb);
+}
+
+void to_json(json &j, const RewardConfig &c) {
+    j = json{{"watch_ratio_weight", c.watchRatioWeight},
+             {"watch_seconds_weight", c.watchSecondsWeight},
+             {"like_weight", c.likeWeight},
+             {"share_weight", c.shareWeight},
+             {"follow_weight", c.followWeight},
+             {"instant_skip_penalty", c.instantSkipPenalty},
+             {"not_interested_penalty", c.notInterestedPenalty}};
+}
+
+void from_json(const json &j, RewardConfig &c) {
+    ensureKnownKeys(j, "reward",
+                    {"watch_ratio_weight", "watch_seconds_weight", "like_weight", "share_weight",
+                     "follow_weight", "instant_skip_penalty", "not_interested_penalty"});
+    readKey(j, "watch_ratio_weight", c.watchRatioWeight);
+    readKey(j, "watch_seconds_weight", c.watchSecondsWeight);
+    readKey(j, "like_weight", c.likeWeight);
+    readKey(j, "share_weight", c.shareWeight);
+    readKey(j, "follow_weight", c.followWeight);
+    readKey(j, "instant_skip_penalty", c.instantSkipPenalty);
+    readKey(j, "not_interested_penalty", c.notInterestedPenalty);
+}
+
 const char *toString(RecommendationAlgorithm a) {
     switch (a) {
     case RecommendationAlgorithm::Random:
@@ -227,13 +275,15 @@ void to_json(json &j, const ExperimentConfig &c) {
              {"ranking", c.ranking},
              {"learning", c.learning},
              {"exploration", c.exploration},
-             {"diversity", c.diversity}};
+             {"diversity", c.diversity},
+             {"behaviour", c.behaviour},
+             {"reward", c.reward}};
 }
 
 void from_json(const json &j, ExperimentConfig &c) {
     ensureKnownKeys(j, "<top-level>",
                     {"simulation", "recommendation", "algorithm", "hnsw", "ranking", "learning",
-                     "exploration", "diversity"});
+                     "exploration", "diversity", "behaviour", "reward"});
     readKey(j, "simulation", c.simulation);
     readKey(j, "recommendation", c.recommendation);
     readKey(j, "algorithm", c.algorithm);
@@ -242,6 +292,8 @@ void from_json(const json &j, ExperimentConfig &c) {
     readKey(j, "learning", c.learning);
     readKey(j, "exploration", c.exploration);
     readKey(j, "diversity", c.diversity);
+    readKey(j, "behaviour", c.behaviour);
+    readKey(j, "reward", c.reward);
 }
 
 ExperimentConfig loadExperimentConfig(const std::filesystem::path &path) {

@@ -67,6 +67,36 @@ struct ExplorationConfig {
     bool operator==(const ExplorationConfig &) const = default;
 };
 
+// TDD 10.2/10.3 behaviour-score parameters: z = alpha*a + beta*Q + gamma*C - delta*D + eps,
+// P(complete) = sigmoid(z), P(instantSkip) = sigmoid(-z + skipBias). The TDD mandates these
+// configurable but suggests no values; defaults here are calibrated so the Phase 3 statistical
+// monotonicity tests pass at TDD-default data-generation settings (tests must not assert these
+// exact values — they are tuning surface, not contract).
+struct BehaviourConfig {
+    double alpha = 4.0;              // weight on base affinity a = p_u . q_v            (TDD 10.1)
+    double beta = 1.0;               // weight on intrinsic quality Q_v
+    double gamma = 0.5;              // weight on true creator affinity C_{u,c}
+    double delta = 1.0;              // weight on duration penalty D_v
+    double noiseStd = 0.5;           // stddev of the gaussian noise term eps
+    double skipBias = 1.0;           // b in P(instantSkip) = sigmoid(-z + b)
+    double notInterestedZ = -2.0;    // NotInterested is possible only when z < this
+    double notInterestedProb = 0.05; // ... and then fires with this probability
+    bool operator==(const BehaviourConfig &) const = default;
+};
+
+// TDD 10.5 reward weights (defaults are the TDD's exact suggested values; the reward itself is
+// clamped to [-1, 1]).
+struct RewardConfig {
+    double watchRatioWeight = 0.45;
+    double watchSecondsWeight = 0.15; // applied to log(1 + watchSeconds), normalized
+    double likeWeight = 0.15;
+    double shareWeight = 0.20;
+    double followWeight = 0.15;
+    double instantSkipPenalty = 0.35;
+    double notInterestedPenalty = 0.75;
+    bool operator==(const RewardConfig &) const = default;
+};
+
 struct DiversityConfig {
     bool enabled = true;
     uint32_t maxPerCreator = 2;
@@ -95,6 +125,8 @@ struct ExperimentConfig {
     LearningConfig learning;
     ExplorationConfig exploration;
     DiversityConfig diversity;
+    BehaviourConfig behaviour;
+    RewardConfig reward;
     bool operator==(const ExperimentConfig &) const = default;
 };
 
@@ -113,6 +145,10 @@ void to_json(nlohmann::json &j, const ExplorationConfig &c);
 void from_json(const nlohmann::json &j, ExplorationConfig &c);
 void to_json(nlohmann::json &j, const DiversityConfig &c);
 void from_json(const nlohmann::json &j, DiversityConfig &c);
+void to_json(nlohmann::json &j, const BehaviourConfig &c);
+void from_json(const nlohmann::json &j, BehaviourConfig &c);
+void to_json(nlohmann::json &j, const RewardConfig &c);
+void from_json(const nlohmann::json &j, RewardConfig &c);
 void to_json(nlohmann::json &j, const RecommendationAlgorithm &a);
 void from_json(const nlohmann::json &j, RecommendationAlgorithm &a);
 void to_json(nlohmann::json &j, const ExperimentConfig &c);

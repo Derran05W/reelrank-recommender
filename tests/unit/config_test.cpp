@@ -114,10 +114,51 @@ TEST(ConfigTest, RoundTrip) {
     c.learning.sessionWeight = 0.31;
     c.exploration.epsilon = 0.09;
     c.diversity.mmrLambda = 0.66;
+    c.behaviour.alpha = 3.3;
+    c.behaviour.skipBias = 0.8;
+    c.reward.shareWeight = 0.25;
     c.algorithm = RecommendationAlgorithm::HnswRankerDiversity;
     json j = c;
     auto back = j.get<ExperimentConfig>();
     EXPECT_EQ(c, back);
+}
+
+TEST(ConfigTest, UnknownBehaviourKeyThrows) {
+    json j = {{"behaviour", {{"alpha", 2.0}, {"alhpa", 2.0}}}};
+    try {
+        j.get<ExperimentConfig>();
+        FAIL() << "expected throw";
+    } catch (const std::invalid_argument &e) {
+        std::string msg = e.what();
+        EXPECT_NE(msg.find("alhpa"), std::string::npos);
+        EXPECT_NE(msg.find("behaviour"), std::string::npos);
+    }
+}
+
+TEST(ConfigTest, UnknownRewardKeyThrows) {
+    json j = {{"reward", {{"like_weight", 0.2}, {"likeweight", 0.2}}}};
+    try {
+        j.get<ExperimentConfig>();
+        FAIL() << "expected throw";
+    } catch (const std::invalid_argument &e) {
+        std::string msg = e.what();
+        EXPECT_NE(msg.find("likeweight"), std::string::npos);
+        EXPECT_NE(msg.find("reward"), std::string::npos);
+    }
+}
+
+// The reward weights default to the TDD 10.5 suggested values exactly. (BehaviourConfig defaults
+// are deliberately NOT pinned here — the TDD suggests none, so they are calibration surface for
+// the behaviour model's statistical tests.)
+TEST(ConfigTest, RewardDefaultsMatchTdd) {
+    RewardConfig r;
+    EXPECT_DOUBLE_EQ(r.watchRatioWeight, 0.45);
+    EXPECT_DOUBLE_EQ(r.watchSecondsWeight, 0.15);
+    EXPECT_DOUBLE_EQ(r.likeWeight, 0.15);
+    EXPECT_DOUBLE_EQ(r.shareWeight, 0.20);
+    EXPECT_DOUBLE_EQ(r.followWeight, 0.15);
+    EXPECT_DOUBLE_EQ(r.instantSkipPenalty, 0.35);
+    EXPECT_DOUBLE_EQ(r.notInterestedPenalty, 0.75);
 }
 
 TEST(ConfigTest, AlgorithmEnumRoundTrip) {
