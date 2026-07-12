@@ -1,0 +1,194 @@
+{
+  "adaptation": {
+    "adaptation_window_regret": 346.92624321954565,
+    "alignment_recovery_round": 11,
+    "control_users": 0,
+    "drift_round": 10,
+    "drifted_users": 10000,
+    "events": [
+      {
+        "at_interaction": 100,
+        "cohort_hi": 0.25,
+        "cohort_lo": 0.0,
+        "topic_mix": [
+          {
+            "topic": 2,
+            "weight": 0.6
+          },
+          {
+            "topic": 9,
+            "weight": 0.25
+          },
+          {
+            "topic": 17,
+            "weight": 0.15
+          }
+        ]
+      },
+      {
+        "at_interaction": 100,
+        "cohort_hi": 0.5,
+        "cohort_lo": 0.25,
+        "topic_mix": [
+          {
+            "topic": 5,
+            "weight": 0.6
+          },
+          {
+            "topic": 13,
+            "weight": 0.25
+          },
+          {
+            "topic": 21,
+            "weight": 0.15
+          }
+        ]
+      },
+      {
+        "at_interaction": 100,
+        "cohort_hi": 0.75,
+        "cohort_lo": 0.5,
+        "topic_mix": [
+          {
+            "topic": 25,
+            "weight": 0.6
+          },
+          {
+            "topic": 29,
+            "weight": 0.25
+          },
+          {
+            "topic": 3,
+            "weight": 0.15
+          }
+        ]
+      },
+      {
+        "at_interaction": 100,
+        "cohort_hi": 1.0,
+        "cohort_lo": 0.75,
+        "topic_mix": [
+          {
+            "topic": 7,
+            "weight": 0.6
+          },
+          {
+            "topic": 15,
+            "weight": 0.25
+          },
+          {
+            "topic": 31,
+            "weight": 0.15
+          }
+        ]
+      }
+    ],
+    "feed_size": 10,
+    "first_drift_interaction": 100,
+    "note": "Preference-drift adaptation (Phase 10, TDD 18.6). Drift is scheduled per user cohort: when a cohort user reaches atInteraction completed interactions, the simulator rebuilds their HIDDEN preference from the event's topic mix (recommender-visible state is untouched at the drift instant). The 'drifted' cohort = users in >= 1 event's cohort; 'control' = the rest. drift_round = first_drift_interaction / feed_size (integer floor): the first round whose feeds can be affected, so rounds < drift_round are strictly pre-drift. pre_drift_reward = mean of the drifted cohort's per-round mean reward over up to the 3 rounds before drift_round (-1 if drift_round == 0). trough_reward/round = min drifted-cohort round reward at/after drift_round; reward_drop = pre_drift_reward - trough_reward. recovery_round = first round >= drift_round with drifted reward >= 0.95*pre_drift_reward (recovery_interactions = (recovery_round - drift_round + 1)*feed_size; both -1 if never/undefined). pre_drift_alignment = drifted-cohort est<->hidden cosine at round drift_round-1; alignment_recovery_round = first round >= drift_round with drifted alignment >= 0.95*pre_drift_alignment -- the 'interactions until new preference detection' reading. adaptation_window_regret = sum of the run's per-round SAMPLED oracle regret over [drift_round, recovery_round|last] (whole-population, true-affinity units; see the regret note). learning_curve.csv gains four columns (drifted_mean_reward, control_mean_reward, drifted_alignment, control_alignment); an empty cohort prints 'nan'. All values deterministic.",
+    "post_drift_alignment_min": 0.2961489151054713,
+    "post_drift_alignment_min_round": 10,
+    "pre_drift_alignment": 0.3475498669828994,
+    "pre_drift_reward": 0.22351055113703852,
+    "recovery_interactions": 30,
+    "recovery_round": 12,
+    "reward_drop": 0.10339216228043076,
+    "trough_reward": 0.12011838885660776,
+    "trough_round": 10
+  },
+  "algorithm": "hnsw_ranker",
+  "counts": {
+    "impressions": 2000000,
+    "reels": 100000,
+    "requests": 200000,
+    "rounds": 20,
+    "sessions": 123208,
+    "users": 10000
+  },
+  "diversity": {
+    "feeds": 200000,
+    "mean_creator_hhi": 0.18266109999999788,
+    "mean_intra_list_similarity": 0.7726254700239709,
+    "mean_topic_hhi": 0.8145723999999921,
+    "mean_unique_creators": 7.67497,
+    "mean_unique_topics": 1.81015,
+    "note": "Per-feed diversity (Phase 9, TDD 18.4), measured on EVERY request (unsampled: a feedSize-10 feed is 45 dot products) from the feed AS PRESENTED, before its impressions are stepped, so the seen-set is the pre-feed state. unique_topics/creators = distinct primaryTopic/creatorId counts; intra_list_similarity = mean pairwise embedding cosine (0 for feeds with <2 items); topic_hhi/creator_hhi = Herfindahl-Hirschman index over topic/creator shares (sum of squared shares: 1.0 = one topic, 1/k = uniform over k distinct). repetition_rate = fraction of feed items that were shown to the user earlier this run OR duplicated within the feed - expected 0 by construction (the orchestrator seen-filters and de-duplicates), published as live verification of the 'duplicate/repetitive content eliminated' exit criterion. The per-round curve is in diversity_metrics.csv; all values are deterministic. This is measured for ANY algorithm (diversity.enabled does not change existing feeds), so the numbers are the phase-comparison baseline.",
+    "repetition_rate": 0.0,
+    "repetition_total": 0
+  },
+  "experiment_id": "hnsw_ranker-seed42-20260712T141823",
+  "learning": {
+    "enabled": true,
+    "final_estimated_hidden_cosine": 0.6789866042622029,
+    "note": "Online preference learning is ENABLED (Phase 7, TDD 8.3/11.2/11.3): every user starts at the cold-start global-average estimate (TDD 11.1) and the OnlineUserStateUpdater updates the long-term/session/estimated preference vectors after each interaction. learning_curve.csv's mean_estimated_hidden_cosine should trend up as estimates converge toward the hidden preference."
+  },
+  "metrics": {
+    "completion_rate": 0.579676,
+    "follow_rate": 0.04937,
+    "instant_skip_rate": 0.333312,
+    "like_rate": 0.15092,
+    "mean_session_length": 16.23271216154795,
+    "mean_true_affinity": 0.31681873501993274,
+    "mean_watch_ratio": 0.610796341353832,
+    "mean_watch_seconds": 19.011932107229217,
+    "reward_per_impression": 0.2544414140992883,
+    "reward_per_session": 4.130274237050975,
+    "share_rate": 0.055313
+  },
+  "notes": {
+    "baseline_flags": "Requests set enableExploration = exploration.enabled (config-driven since Phase 8) and enableDiversity = diversity.enabled (config-driven since Phase 9). No existing recommender reads either flag, so both are inert for every non-exploration / non-diversity algorithm - the sibling orchestrator's gates are their only readers. candidateLimit = recommendation.vectorCandidates; requestTime = simulator logical clock; sessionId = the most recent interaction's session (SessionId{0} before any interaction).",
+    "learning": "Online preference learning is ENABLED (Phase 7, TDD 8.3/11.2/11.3): every user starts at the cold-start global-average estimate (TDD 11.1) and the OnlineUserStateUpdater updates the long-term/session/estimated preference vectors after each interaction. learning_curve.csv's mean_estimated_hidden_cosine should trend up as estimates converge toward the hidden preference."
+  },
+  "oracle": {
+    "cumulative_regret": 2087.9283959351988,
+    "mean_regret": 0.5292594159531556,
+    "regret_units_note": "Regret is measured in TRUE-AFFINITY units, not reward units: simulating counterfactual oracle interactions would consume behaviour rng draws and perturb determinism (D8), so the oracle compares mean true affinity of its exhaustive top-k against the recommended feed. Affinity is the monotone core of the reward (TDD 10.1/10.5).",
+    "sample_rate": 0.02,
+    "sampled_requests": 3945
+  },
+  "retrieval": {
+    "applicable": true,
+    "mean_distance_error": 0.007559931124229462,
+    "note": "Live retrieval quality (TDD 18.1) on a Bernoulli(retrieval_sample_rate) subset of requests: the recommender's ANN index is compared against an exact ground-truth index over the active reels for the same query, at k=50. Recall@K = |ANN_K intersect Exact_K| / min(K, corpus); Recall@10 uses the first 10 results. Distance error is the mean positionwise |d_ann,i - d_exact,i| over the first 10 results. Values are deterministic (exact searches). For an exact recommender this measures exactly recall 1.0 / distance error 0.0 (a wiring self-check).",
+    "recall_at_10": 0.7904226728560962,
+    "recall_at_50": 0.7460298069875395,
+    "sample_rate": 0.02,
+    "sampled_requests": 4093
+  },
+  "seed": 42,
+  "timing": {
+    "ranking_latency_ms": {
+      "max": 4.535417,
+      "mean": 0.25993260873499885,
+      "p50": 0.192875,
+      "p95": 0.467292,
+      "p99": 0.4951674100000004,
+      "samples": 200000
+    },
+    "recommend_latency_ms": {
+      "max": 49.58675,
+      "mean": 3.472479931440019,
+      "p50": 3.004958,
+      "p95": 5.434791049999999,
+      "p99": 6.107459670000002,
+      "samples": 200000
+    },
+    "reranking_latency_ms": {
+      "max": 0.016209,
+      "mean": 5.2998275000012735e-05,
+      "p50": 4.1e-05,
+      "p95": 0.000208,
+      "p99": 0.000333,
+      "samples": 200000
+    },
+    "retrieval_latency_ms": {
+      "max": 48.674792,
+      "mean": 3.045918989745035,
+      "p50": 2.6535,
+      "p95": 4.767333,
+      "p99": 5.465126250000001,
+      "samples": 200000
+    },
+    "total_wall_seconds": 781.040818417
+  }
+}

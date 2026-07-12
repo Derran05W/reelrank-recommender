@@ -30,6 +30,7 @@
 #include "rr/recommendation/recommender_factory.hpp"
 #include "rr/recommendation/vector_index.hpp"
 #include "rr/simulation/dataset_generator.hpp"
+#include "rr/simulation/drift_scheduler.hpp"
 #include "rr/simulation/simulator.hpp"
 
 namespace rr {
@@ -87,6 +88,24 @@ ExperimentResult ExperimentRunner::run() {
     const OnlineUserStateUpdater updater(ds.reels, config_.learning);
     const bool learningEnabled = config_.learning.enabled;
 
+    // Scheduled hidden-preference drift (Phase 10, TDD 11.4). Constructed ONCE over the generated
+    // topic set; construction VALIDATES the drift config (empty/invalid mix, unknown topic, bad
+    // cohort range) and throws std::invalid_argument -> propagates as a setup error (fail fast,
+    // D10). The scheduler reads/writes ONLY HiddenUserState and is rng-free and clock-free, so
+    // invoking maybeApply before each Simulator::step is stream-neutral (D8): when
+    // config.drift.events is empty maybeApply is a guaranteed no-op and the whole run stays
+    // byte-identical to a pre-Phase-10 run (the regression contract). `drifted[u]` is the per-user
+    // cohort flag the adaptation metrics split on; it is grown in lockstep with doneByUser when
+    // Phase-8 injection appends users.
+    const DriftScheduler drift(config_.drift, ds.topics);
+    const bool driftConfigured = drift.configured();
+    std::vector<uint8_t> drifted(ds.users.size(), 0);
+    if (driftConfigured) {
+        for (std::size_t u = 0; u < ds.users.size(); ++u) {
+            drifted[u] = drift.everApplies(ds.users[u].id) ? 1 : 0;
+        }
+    }
+
     // 2. Simulator, recommender, and oracle each on an INDEPENDENT named rng stream (D8) so adding
     //    the oracle never perturbs the behaviour or recommender streams.
     Simulator sim(config_.behaviour, config_.reward, forkRng(seed, "behaviour"),
@@ -131,6 +150,19 @@ ExperimentResult ExperimentRunner::run() {
     // Estimate<->hidden alignment (TDD 18.5), one mean per round measured after the round
     // completes.
     std::vector<double> alignmentByRound(rounds, 0.0);
+
+    // Drift cohort split (Phase 10, TDD 18.6): per-round reward and end-of-round est<->hidden
+    // alignment, separated into the drifted vs control cohort. All inert (never read) when drift is
+    // not configured. Reward accumulators pool this round's impressions; alignment accumulators are
+    // filled by the end-of-round alignment loop below.
+    struct CohortAcc {
+        std::size_t count = 0;
+        double sum = 0.0;
+    };
+    std::vector<CohortAcc> driftedRewardByRound(rounds);
+    std::vector<CohortAcc> controlRewardByRound(rounds);
+    std::vector<CohortAcc> driftedAlignByRound(rounds);
+    std::vector<CohortAcc> controlAlignByRound(rounds);
     // Per-feed diversity (Phase 9, TDD 18.4). Accumulated on EVERY request (unsampled: the
     // computation is trivial) from the feed AS PRESENTED, before its impressions are stepped. Its
     // means feed diversity_metrics.csv + the summary.json diversity block. Deterministic
@@ -216,6 +248,15 @@ ExperimentResult ExperimentRunner::run() {
             // receive requests from THIS round onward - naturally only the remaining rounds, which
             // is exactly their cold-start window.
             doneByUser.resize(ds.users.size(), 0);
+            // Extend the drift cohort flags for the injected users (Phase 10): cohort membership is
+            // a deterministic hash of the userId, so an injected user drifts iff its id lands in a
+            // configured cohort, exactly like an original user.
+            drifted.resize(ds.users.size(), 0);
+            if (driftConfigured) {
+                for (std::size_t u = firstInjectedUserIndex; u < ds.users.size(); ++u) {
+                    drifted[u] = drift.everApplies(ds.users[u].id) ? 1 : 0;
+                }
+            }
         }
 
         for (size_t u = 0; u < ds.users.size(); ++u) {
@@ -330,6 +371,16 @@ ExperimentResult ExperimentRunner::run() {
                 const ReelId reelId = resp.reels[k].reelId;
                 Reel &reel = ds.reels[reelId.value];
                 const Creator &creator = ds.creators[reel.creatorId.value];
+
+                // Scheduled hidden-preference drift (Phase 10, TDD 11.4): fire BEFORE the step,
+                // keyed on the DOMAIN counter user.totalInteractions (Simulator::step increments it
+                // by exactly 1 per impression, so every count is hit once -> each event fires
+                // exactly once per cohort user). The impression about to be simulated (0-based
+                // index == totalInteractions) is therefore the FIRST interaction under the new
+                // preference. maybeApply is rng/clock-free, so when drift is unconfigured this is a
+                // guaranteed no-op and stream-neutral (D8).
+                drift.maybeApply(ds.hiddenStates[u], static_cast<uint32_t>(user.totalInteractions));
+
                 const StepResult step = sim.step(user, ds.hiddenStates[u], reel, creator);
 
                 // Online preference update (Phase 7): runs AFTER Simulator::step has recorded the
@@ -355,6 +406,16 @@ ExperimentResult ExperimentRunner::run() {
                 s.sessionId = step.event.sessionId.value;
                 metrics.add(round, s);
                 ++impressionCount;
+
+                // Drift cohort reward split (Phase 10, TDD 18.6): pool this impression's reward
+                // into the drifted or control accumulator. Inert (guarded) when drift is
+                // unconfigured.
+                if (driftConfigured) {
+                    CohortAcc &racc =
+                        drifted[u] ? driftedRewardByRound[round] : controlRewardByRound[round];
+                    racc.count += 1;
+                    racc.sum += step.event.reward;
+                }
 
                 // --- Phase 8 injection metrics (all inert when injection is not configured)
                 // -------
@@ -394,8 +455,18 @@ ExperimentResult ExperimentRunner::run() {
         if (!ds.users.empty()) {
             double cosineSum = 0.0;
             for (size_t u = 0; u < ds.users.size(); ++u) {
-                cosineSum +=
+                const double cos =
                     dot(ds.users[u].estimatedPreference, ds.hiddenStates[u].hiddenPreference);
+                cosineSum += cos;
+                // Drift cohort alignment split (Phase 10, TDD 18.6). The population sum above is
+                // unchanged (same terms, same order), so the overall alignment stays
+                // byte-identical.
+                if (driftConfigured) {
+                    CohortAcc &aacc =
+                        drifted[u] ? driftedAlignByRound[round] : controlAlignByRound[round];
+                    aacc.count += 1;
+                    aacc.sum += cos;
+                }
             }
             alignmentByRound[round] = cosineSum / static_cast<double>(ds.users.size());
         }
@@ -460,6 +531,21 @@ ExperimentResult ExperimentRunner::run() {
         rm.meanCreatorConcentration = dsum.meanCreatorConcentration;
         rm.repetitionCount = dsum.totalRepeats;
         rm.repetitionRate = dsum.repetitionRate;
+
+        // Drift cohort split (Phase 10, TDD 18.6): means (0.0 with a 0 count; the count lets the
+        // writer print `nan` for an empty cohort). All left 0 when drift is not configured.
+        const CohortAcc &dr = driftedRewardByRound[r];
+        const CohortAcc &cr = controlRewardByRound[r];
+        const CohortAcc &da = driftedAlignByRound[r];
+        const CohortAcc &ca = controlAlignByRound[r];
+        rm.driftedImpressions = dr.count;
+        rm.driftedMeanReward = dr.count > 0 ? dr.sum / static_cast<double>(dr.count) : 0.0;
+        rm.controlImpressions = cr.count;
+        rm.controlMeanReward = cr.count > 0 ? cr.sum / static_cast<double>(cr.count) : 0.0;
+        rm.driftedAlignUsers = da.count;
+        rm.driftedAlignment = da.count > 0 ? da.sum / static_cast<double>(da.count) : 0.0;
+        rm.controlAlignUsers = ca.count;
+        rm.controlAlignment = ca.count > 0 ? ca.sum / static_cast<double>(ca.count) : 0.0;
 
         result.rounds.push_back(rm);
 
@@ -596,6 +682,115 @@ ExperimentResult ExperimentRunner::run() {
         cs.injectedImpressionShare = impressionCount > 0 ? static_cast<double>(cumImpr) /
                                                                static_cast<double>(impressionCount)
                                                          : 0.0;
+    }
+
+    // 4c. Preference-drift adaptation report (Phase 10, TDD 18.6). Assembled + written ONLY when
+    //     drift is configured; a non-drift run leaves adaptation.configured == false and writes NO
+    //     adaptation keys/columns (byte-identical regression contract). All reads are of the
+    //     already-assembled per-round cohort aggregates, so this is pure post-processing.
+    AdaptationReport &ad = result.adaptation;
+    ad.configured = driftConfigured;
+    if (driftConfigured) {
+        ad.feedSize = feedSize;
+        ad.firstDriftInteraction = drift.firstDriftInteraction();
+        // driftRound = floor(firstDriftInteraction / feedSize): the first round whose feeds can be
+        // affected by the drift (the impression at index firstDriftInteraction is served here).
+        ad.driftRound = feedSize > 0 ? static_cast<long>(ad.firstDriftInteraction / feedSize) : 0;
+
+        for (uint8_t f : drifted) {
+            if (f) {
+                ++ad.driftedUsers;
+            }
+        }
+        ad.controlUsers = drifted.size() - ad.driftedUsers;
+
+        const long driftRound = ad.driftRound;
+        const long nRounds = static_cast<long>(result.rounds.size());
+
+        // Pre-drift reward baseline: mean of the drifted cohort's per-round mean reward over up to
+        // the 3 rounds immediately before driftRound (rounds with drifted impressions only). -1
+        // when driftRound == 0 or none of the window rounds had drifted impressions.
+        if (driftRound > 0) {
+            const long lo = std::max<long>(0, driftRound - 3);
+            double sum = 0.0;
+            long n = 0;
+            for (long r = lo; r < driftRound && r < nRounds; ++r) {
+                if (result.rounds[r].driftedImpressions > 0) {
+                    sum += result.rounds[r].driftedMeanReward;
+                    ++n;
+                }
+            }
+            if (n > 0) {
+                ad.preDriftReward = sum / static_cast<double>(n);
+            }
+        }
+
+        // Trough = min drifted-cohort round reward over rounds >= driftRound; rewardDrop against
+        // the pre-drift baseline (only when both are defined).
+        for (long r = driftRound; r < nRounds; ++r) {
+            if (result.rounds[r].driftedImpressions == 0) {
+                continue;
+            }
+            const double rew = result.rounds[r].driftedMeanReward;
+            if (ad.troughRound < 0 || rew < ad.troughReward) {
+                ad.troughReward = rew;
+                ad.troughRound = r;
+            }
+        }
+        if (ad.preDriftReward >= 0.0 && ad.troughRound >= 0) {
+            ad.rewardDrop = ad.preDriftReward - ad.troughReward;
+        }
+
+        // Recovery: first round >= driftRound with drifted reward >= 0.95 * preDriftReward.
+        if (ad.preDriftReward > 0.0) {
+            const double target = 0.95 * ad.preDriftReward;
+            for (long r = driftRound; r < nRounds; ++r) {
+                if (result.rounds[r].driftedImpressions > 0 &&
+                    result.rounds[r].driftedMeanReward >= target) {
+                    ad.recoveryRound = r;
+                    ad.recoveryInteractions = (r - driftRound + 1) * static_cast<long>(feedSize);
+                    break;
+                }
+            }
+        }
+
+        // Alignment adaptation: pre-drift baseline (round driftRound-1), post-drift minimum, and
+        // the 0.95 * pre-drift threshold crossing (the "new preference detected" reading).
+        if (driftRound > 0 && driftRound - 1 < nRounds &&
+            result.rounds[driftRound - 1].driftedAlignUsers > 0) {
+            ad.preDriftAlignment = result.rounds[driftRound - 1].driftedAlignment;
+        }
+        for (long r = driftRound; r < nRounds; ++r) {
+            if (result.rounds[r].driftedAlignUsers == 0) {
+                continue;
+            }
+            const double al = result.rounds[r].driftedAlignment;
+            if (ad.postDriftAlignmentMinRound < 0 || al < ad.postDriftAlignmentMin) {
+                ad.postDriftAlignmentMin = al;
+                ad.postDriftAlignmentMinRound = r;
+            }
+        }
+        if (ad.preDriftAlignment > 0.0) {
+            const double target = 0.95 * ad.preDriftAlignment;
+            for (long r = driftRound; r < nRounds; ++r) {
+                if (result.rounds[r].driftedAlignUsers > 0 &&
+                    result.rounds[r].driftedAlignment >= target) {
+                    ad.alignmentRecoveryRound = r;
+                    break;
+                }
+            }
+        }
+
+        // Cumulative regret during adaptation: sum of per-round SAMPLED regret over
+        // [driftRound, recoveryRound|last]. Whole-population aggregate, true-affinity units.
+        if (driftRound < nRounds) {
+            const long end = ad.recoveryRound >= 0 ? ad.recoveryRound : nRounds - 1;
+            double regretSum = 0.0;
+            for (long r = driftRound; r <= end && r < nRounds; ++r) {
+                regretSum += regretByRound[static_cast<std::size_t>(r)].sum;
+            }
+            ad.adaptationWindowRegret = regretSum;
+        }
     }
 
     // 5. Write the §26 output layout.

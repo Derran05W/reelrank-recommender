@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <vector>
 
 #include <nlohmann/json_fwd.hpp>
 
@@ -161,6 +162,38 @@ struct DiversityConfig {
     bool operator==(const DiversityConfig &) const = default;
 };
 
+// One weighted topic in a drift event's target mix (TDD 11.4). `topic` is a TopicId value that
+// must exist in the generated topic set (validated by DriftScheduler at construction); `weight` is
+// a relative weight > 0 — the mix is normalized at application, so weights need not sum to 1.
+struct DriftTopicWeight {
+    uint32_t topic = 0;
+    double weight = 0.0;
+    bool operator==(const DriftTopicWeight &) const = default;
+};
+
+// One scheduled hidden-preference change (TDD 11.4, Phase 10): when a user in the cohort reaches
+// `atInteraction` completed interactions, their hidden preference is rebuilt from `topicMix`
+// (interactions with 0-based index >= atInteraction see the new preference). The cohort is the
+// deterministic, rng-free user slice with hash01(userId) in [cohortLo, cohortHi) — disjoint
+// [lo, hi) ranges express disjoint cohorts drifting to different mixes. Defaults cover the whole
+// population.
+struct DriftEvent {
+    uint32_t atInteraction = 0;
+    double cohortLo = 0.0;
+    double cohortHi = 1.0;
+    std::vector<DriftTopicWeight> topicMix;
+    bool operator==(const DriftEvent &) const = default;
+};
+
+// Scheduled interest drift (TDD 11.4, Phase 10). Empty `events` = drift disabled: every drift
+// branch in the simulator/harness is inert and the run's output is byte-identical to a
+// pre-Phase-10 run (the regression contract, same pattern as Phase 8 injection). An addition to
+// the TDD 21 example, mandated by phase-10 task 1.
+struct DriftConfig {
+    std::vector<DriftEvent> events;
+    bool operator==(const DriftConfig &) const = default;
+};
+
 // Evaluation-harness parameters (TDD 19 / phase-4 task 5). The oracle exhaustively scores all
 // reels by true hidden affinity, so it runs only on a Bernoulli-sampled subset of requests; the
 // rate is config-driven and recorded in every experiment's output.
@@ -193,6 +226,7 @@ struct ExperimentConfig {
     LearningConfig learning;
     ExplorationConfig exploration;
     DiversityConfig diversity;
+    DriftConfig drift;
     BehaviourConfig behaviour;
     RewardConfig reward;
     EvaluationConfig evaluation;
@@ -214,6 +248,12 @@ void to_json(nlohmann::json &j, const ExplorationConfig &c);
 void from_json(const nlohmann::json &j, ExplorationConfig &c);
 void to_json(nlohmann::json &j, const DiversityConfig &c);
 void from_json(const nlohmann::json &j, DiversityConfig &c);
+void to_json(nlohmann::json &j, const DriftTopicWeight &c);
+void from_json(const nlohmann::json &j, DriftTopicWeight &c);
+void to_json(nlohmann::json &j, const DriftEvent &c);
+void from_json(const nlohmann::json &j, DriftEvent &c);
+void to_json(nlohmann::json &j, const DriftConfig &c);
+void from_json(const nlohmann::json &j, DriftConfig &c);
 void to_json(nlohmann::json &j, const BehaviourConfig &c);
 void from_json(const nlohmann::json &j, BehaviourConfig &c);
 void to_json(nlohmann::json &j, const RewardConfig &c);

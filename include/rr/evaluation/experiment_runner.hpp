@@ -52,6 +52,24 @@ struct RoundMetrics {
     double meanCreatorConcentration = 0.0; // creator HHI
     std::size_t repetitionCount = 0;
     double repetitionRate = 0.0;
+
+    // Drift cohort split (Phase 10, TDD 18.6). Populated only when drift is configured; when it is
+    // NOT, all remain zero and NONE of these are written (the regression contract). The split is by
+    // DriftScheduler::everApplies(userId): "drifted" = users in at least one event's cohort,
+    // "control" = the rest. Rewards are means over THIS round's impressions of the cohort;
+    // alignments are means over the cohort's users of end-of-round cos(estimated, hidden) (the same
+    // evaluation-only hidden-state read as meanEstimatedHiddenCosine, TDD 18.2 carve-out). The
+    // *Impressions / *AlignUsers counts let the writer print `nan` for an empty cohort (e.g.
+    // control is empty under whole-population drift) instead of a meaningless 0.0. Deterministic
+    // (rng/clock-free): part of the byte-identical guarantee.
+    std::size_t driftedImpressions = 0;
+    double driftedMeanReward = 0.0;
+    std::size_t controlImpressions = 0;
+    double controlMeanReward = 0.0;
+    std::size_t driftedAlignUsers = 0;
+    double driftedAlignment = 0.0;
+    std::size_t controlAlignUsers = 0;
+    double controlAlignment = 0.0;
 };
 
 // One row of new_user_curve.csv (Phase 8, TDD 18.5): the mean reward and mean oracle regret over
@@ -110,6 +128,72 @@ struct ColdStartReport {
 
     std::vector<NewUserCurvePoint> newUserCurve;
     std::vector<NewReelExposurePoint> newReelExposure;
+};
+
+// Preference-drift adaptation report (Phase 10, TDD 18.6). Populated only when drift is configured
+// (config.drift has >= 1 event); when `configured` is false the whole block is absent from output
+// and the run is byte-identical to a pre-Phase-10 run (the regression contract, mirroring
+// ColdStartReport). Every field is deterministic (the scheduler is rng/clock-free, D8).
+//
+// The window anchor is `driftRound = firstDriftInteraction / feedSize` (integer floor): the first
+// impression at 0-based index >= firstDriftInteraction lands in a feed served in round driftRound,
+// so round driftRound is the FIRST round whose feeds can be affected by the drift, and rounds
+// < driftRound are strictly pre-drift. All reward/alignment aggregates below are over the DRIFTED
+// cohort only (the users whose hidden preference actually moved); the control cohort is the
+// unaffected comparison group carried in the per-round RoundMetrics columns. Regret is measured in
+// TRUE-AFFINITY units (Phase 4 oracle deviation; see the summary.json regret note).
+//
+// Sentinels: -1.0 for an undefined real-valued baseline (documented per field); -1 for a
+// long "never happened / not applicable" round or interaction count.
+struct AdaptationReport {
+    bool configured = false;
+
+    std::size_t driftedUsers = 0; // users with drift.everApplies(id) == true (final population)
+    std::size_t controlUsers = 0; // the rest
+
+    uint32_t firstDriftInteraction = 0; // scheduler's earliest configured atInteraction
+    long driftRound = 0;                // firstDriftInteraction / feedSize (floor); anchor round
+    std::size_t feedSize = 0;           // recorded so consumers can reconstruct the interaction map
+
+    // Pre-drift reward baseline: mean of the drifted cohort's per-round mean reward over up to the
+    // 3 rounds immediately before driftRound ([max(0, driftRound-3), driftRound-1]); fewer rounds
+    // when drift is early. -1.0 when driftRound == 0 (no pre-drift rounds) or none of the window
+    // rounds had drifted impressions -> then rewardDrop / recovery are undefined too.
+    double preDriftReward = -1.0;
+
+    // Trough = min drifted-cohort round mean reward over rounds >= driftRound (rounds with drifted
+    // impressions only); troughRound is its round (-1 if there are no post-drift drifted rounds).
+    // rewardDrop = preDriftReward - troughReward (0.0 when preDriftReward or troughRound
+    // undefined).
+    double troughReward = 0.0;
+    long troughRound = -1;
+    double rewardDrop = 0.0;
+
+    // Recovery = first round >= driftRound whose drifted-cohort mean reward >= 0.95 *
+    // preDriftReward; recoveryInteractions = (recoveryRound - driftRound + 1) * feedSize
+    // (interactions the drifted cohort consumed from the drift round through recovery, inclusive).
+    // Both -1 when preDriftReward is undefined (<= 0) or the threshold is never re-crossed within
+    // the run.
+    long recoveryRound = -1;
+    long recoveryInteractions = -1;
+
+    // Alignment (est<->hidden cosine) adaptation of the drifted cohort. preDriftAlignment is the
+    // cohort's alignment at round driftRound-1 (-1.0 when driftRound == 0). postDriftAlignmentMin
+    // is the min over rounds >= driftRound (its round in *Round; -1 if none).
+    // alignmentRecoveryRound is the first round >= driftRound with alignment >= 0.95 *
+    // preDriftAlignment -- the threshold crossing read as "interactions until the new preference is
+    // detected" (the estimate has re-locked onto the drifted hidden preference); -1 when undefined
+    // or never.
+    double preDriftAlignment = -1.0;
+    double postDriftAlignmentMin = 0.0;
+    long postDriftAlignmentMinRound = -1;
+    long alignmentRecoveryRound = -1;
+
+    // Cumulative regret during adaptation: sum of the run's per-round SAMPLED oracle regret over
+    // rounds [driftRound, recoveryRound] (recoveryRound replaced by the last round when recovery
+    // never happens). This is the whole-population sampled aggregate (regret is not cohort-split in
+    // the harness), in true-affinity units. 0.0 when driftRound is beyond the run.
+    double adaptationWindowRegret = 0.0;
 };
 
 // Everything one experiment produced, in memory. The ResultsWriter serializes it to disk; the
@@ -181,6 +265,11 @@ struct ExperimentResult {
     // Cold-start / injection metrics (Phase 8, TDD 18.5). `configured` is false for a normal run,
     // in which case no injection files/keys are written (byte-identical to a pre-Phase-8 run).
     ColdStartReport coldStart;
+
+    // Preference-drift adaptation metrics (Phase 10, TDD 18.6). `configured` is false for a run
+    // with no drift events, in which case no adaptation keys/columns are written (byte-identical to
+    // a pre-Phase-10 run).
+    AdaptationReport adaptation;
 };
 
 // Runs the end-to-end evaluation loop (TDD 20 + phase-4 task 4, phase-7 tasks 1/4) from a

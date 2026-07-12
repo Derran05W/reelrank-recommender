@@ -109,6 +109,56 @@ TEST(ConfigTest, AllBlocksParse) {
     EXPECT_DOUBLE_EQ(c.diversity.mmrLambda, 0.5);
 }
 
+TEST(ConfigTest, DriftDefaultsDisabled) {
+    // Phase 10 scheduled drift is opt-in: the default config has no events (drift disabled), and
+    // an empty-events parse equals the default (the pre-Phase-10 byte-identical contract hinges
+    // on this default).
+    ExperimentConfig def;
+    EXPECT_TRUE(def.drift.events.empty());
+    json j = {{"drift", {{"events", json::array()}}}};
+    EXPECT_EQ(j.get<ExperimentConfig>(), def);
+}
+
+TEST(ConfigTest, DriftBlockParses) {
+    json j = {
+        {"drift",
+         {{"events",
+           {{{"at_interaction", 100},
+             {"cohort_lo", 0.25},
+             {"cohort_hi", 0.5},
+             {"topic_mix", {{{"topic", 3}, {"weight", 0.6}}, {{"topic", 11}, {"weight", 0.4}}}}},
+            {{"at_interaction", 150}, {"topic_mix", {{{"topic", 7}, {"weight", 1.0}}}}}}}}}};
+    auto c = j.get<ExperimentConfig>();
+    ASSERT_EQ(c.drift.events.size(), 2u);
+    const DriftEvent &e0 = c.drift.events[0];
+    EXPECT_EQ(e0.atInteraction, 100u);
+    EXPECT_DOUBLE_EQ(e0.cohortLo, 0.25);
+    EXPECT_DOUBLE_EQ(e0.cohortHi, 0.5);
+    ASSERT_EQ(e0.topicMix.size(), 2u);
+    EXPECT_EQ(e0.topicMix[0].topic, 3u);
+    EXPECT_DOUBLE_EQ(e0.topicMix[0].weight, 0.6);
+    EXPECT_EQ(e0.topicMix[1].topic, 11u);
+    EXPECT_DOUBLE_EQ(e0.topicMix[1].weight, 0.4);
+    // Cohort defaults cover the whole population.
+    const DriftEvent &e1 = c.drift.events[1];
+    EXPECT_DOUBLE_EQ(e1.cohortLo, 0.0);
+    EXPECT_DOUBLE_EQ(e1.cohortHi, 1.0);
+    // Round-trips through to_json/from_json unchanged.
+    json out = c;
+    EXPECT_EQ(out.get<ExperimentConfig>(), c);
+}
+
+TEST(ConfigTest, UnknownDriftKeysThrow) {
+    for (const json &j :
+         {json{{"drift", {{"bogus_key", 1}}}},
+          json{{"drift", {{"events", {{{"at_interaction", 1}, {"typo_key", 2}}}}}}},
+          json{
+              {"drift",
+               {{"events", {{{"topic_mix", {{{"topic", 1}, {"weight", 1.0}, {"oops", 3}}}}}}}}}}}) {
+        EXPECT_THROW(j.get<ExperimentConfig>(), std::invalid_argument);
+    }
+}
+
 TEST(ConfigTest, UnknownTopLevelKeyThrows) {
     json j = {{"bogus", 1}};
     try {

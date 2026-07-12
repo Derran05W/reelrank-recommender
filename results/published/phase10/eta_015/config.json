@@ -1,0 +1,170 @@
+{
+  "algorithm": "hnsw_ranker",
+  "behaviour": {
+    "alpha": 4.0,
+    "beta": 1.0,
+    "delta": 1.0,
+    "gamma": 0.5,
+    "noise_std": 0.5,
+    "not_interested_prob": 0.05,
+    "not_interested_z": -2.0,
+    "skip_bias": 1.0
+  },
+  "diversity": {
+    "enabled": true,
+    "max_per_creator": 2,
+    "max_per_topic": 3,
+    "mmr_lambda": 0.75,
+    "use_mmr": true
+  },
+  "drift": {
+    "events": [
+      {
+        "at_interaction": 100,
+        "cohort_hi": 0.25,
+        "cohort_lo": 0.0,
+        "topic_mix": [
+          {
+            "topic": 2,
+            "weight": 0.6
+          },
+          {
+            "topic": 9,
+            "weight": 0.25
+          },
+          {
+            "topic": 17,
+            "weight": 0.15
+          }
+        ]
+      },
+      {
+        "at_interaction": 100,
+        "cohort_hi": 0.5,
+        "cohort_lo": 0.25,
+        "topic_mix": [
+          {
+            "topic": 5,
+            "weight": 0.6
+          },
+          {
+            "topic": 13,
+            "weight": 0.25
+          },
+          {
+            "topic": 21,
+            "weight": 0.15
+          }
+        ]
+      },
+      {
+        "at_interaction": 100,
+        "cohort_hi": 0.75,
+        "cohort_lo": 0.5,
+        "topic_mix": [
+          {
+            "topic": 25,
+            "weight": 0.6
+          },
+          {
+            "topic": 29,
+            "weight": 0.25
+          },
+          {
+            "topic": 3,
+            "weight": 0.15
+          }
+        ]
+      },
+      {
+        "at_interaction": 100,
+        "cohort_hi": 1.0,
+        "cohort_lo": 0.75,
+        "topic_mix": [
+          {
+            "topic": 7,
+            "weight": 0.6
+          },
+          {
+            "topic": 15,
+            "weight": 0.25
+          },
+          {
+            "topic": 31,
+            "weight": 0.15
+          }
+        ]
+      }
+    ]
+  },
+  "evaluation": {
+    "oracle_sample_rate": 0.02,
+    "retrieval_sample_rate": 0.02
+  },
+  "exploration": {
+    "enabled": true,
+    "epsilon": 0.05,
+    "fresh_window_seconds": 259200.0,
+    "guaranteed_slots": 2
+  },
+  "hnsw": {
+    "ef_construction": 200,
+    "ef_search": 64,
+    "m": 16
+  },
+  "learning": {
+    "enabled": true,
+    "long_term_rate": 0.15,
+    "long_term_weight": 0.65,
+    "recent_window": 20,
+    "session_lambda": 0.9,
+    "session_rate": 0.15,
+    "session_weight": 0.35
+  },
+  "ranking": {
+    "creator_affinity_weight": 0.07,
+    "duration_match_weight": 0.05,
+    "exploration_weight": 0.05,
+    "freshness_half_life_seconds": 604800.0,
+    "freshness_weight": 0.08,
+    "impression_penalty_weight": 0.05,
+    "popularity_weight": 0.07,
+    "quality_weight": 0.1,
+    "repetition_penalty": 0.15,
+    "session_topic_weight": 0.05,
+    "similarity_weight": 0.5,
+    "trending_half_life_seconds": 21600.0,
+    "trending_weight": 0.08
+  },
+  "recommendation": {
+    "creator_affinity_candidates": 100,
+    "exploration_candidates": 50,
+    "feed_size": 10,
+    "fresh_candidates": 100,
+    "popular_candidates": 100,
+    "trending_candidates": 100,
+    "vector_candidates": 500
+  },
+  "reward": {
+    "follow_weight": 0.15,
+    "instant_skip_penalty": 0.35,
+    "like_weight": 0.15,
+    "not_interested_penalty": 0.75,
+    "share_weight": 0.2,
+    "watch_ratio_weight": 0.45,
+    "watch_seconds_weight": 0.15
+  },
+  "simulation": {
+    "creators": 5000,
+    "dimensions": 64,
+    "interactions_per_user": 200,
+    "new_reels": 0,
+    "new_reels_at": 0,
+    "new_users": 0,
+    "new_users_at": 0,
+    "reels": 100000,
+    "seed": 42,
+    "topics": 32,
+    "users": 10000
+  }
+}

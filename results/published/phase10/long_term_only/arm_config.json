@@ -1,0 +1,134 @@
+{
+  "simulation": {
+    "seed": 42,
+    "users": 10000,
+    "reels": 100000,
+    "creators": 5000,
+    "topics": 32,
+    "dimensions": 64,
+    "interactions_per_user": 200
+  },
+  "recommendation": {
+    "feed_size": 10,
+    "vector_candidates": 500,
+    "popular_candidates": 100,
+    "fresh_candidates": 100,
+    "exploration_candidates": 50
+  },
+  "hnsw": {
+    "m": 16,
+    "ef_construction": 200,
+    "ef_search": 64
+  },
+  "ranking": {
+    "similarity_weight": 0.50,
+    "quality_weight": 0.10,
+    "freshness_weight": 0.08,
+    "popularity_weight": 0.07,
+    "trending_weight": 0.08,
+    "creator_affinity_weight": 0.07,
+    "exploration_weight": 0.05,
+    "repetition_penalty": 0.15
+  },
+  "learning": {
+    "long_term_rate": 0.02,
+    "session_rate": 0.15,
+    "recent_window": 20,
+    "long_term_weight": 1.0,
+    "session_weight": 0.0
+  },
+  "exploration": {
+    "enabled": true,
+    "epsilon": 0.05
+  },
+  "diversity": {
+    "enabled": true,
+    "max_per_creator": 2,
+    "max_per_topic": 3,
+    "mmr_lambda": 0.75
+  },
+  "drift": {
+    "events": [
+      {
+        "at_interaction": 100,
+        "cohort_lo": 0.0,
+        "cohort_hi": 0.25,
+        "topic_mix": [
+          {
+            "topic": 2,
+            "weight": 0.6
+          },
+          {
+            "topic": 9,
+            "weight": 0.25
+          },
+          {
+            "topic": 17,
+            "weight": 0.15
+          }
+        ]
+      },
+      {
+        "at_interaction": 100,
+        "cohort_lo": 0.25,
+        "cohort_hi": 0.5,
+        "topic_mix": [
+          {
+            "topic": 5,
+            "weight": 0.6
+          },
+          {
+            "topic": 13,
+            "weight": 0.25
+          },
+          {
+            "topic": 21,
+            "weight": 0.15
+          }
+        ]
+      },
+      {
+        "at_interaction": 100,
+        "cohort_lo": 0.5,
+        "cohort_hi": 0.75,
+        "topic_mix": [
+          {
+            "topic": 25,
+            "weight": 0.6
+          },
+          {
+            "topic": 29,
+            "weight": 0.25
+          },
+          {
+            "topic": 3,
+            "weight": 0.15
+          }
+        ]
+      },
+      {
+        "at_interaction": 100,
+        "cohort_lo": 0.75,
+        "cohort_hi": 1.0,
+        "topic_mix": [
+          {
+            "topic": 7,
+            "weight": 0.6
+          },
+          {
+            "topic": 15,
+            "weight": 0.25
+          },
+          {
+            "topic": 31,
+            "weight": 0.15
+          }
+        ]
+      }
+    ]
+  },
+  "evaluation": {
+    "oracle_sample_rate": 0.02,
+    "retrieval_sample_rate": 0.02
+  }
+}

@@ -97,6 +97,33 @@ const char *kDiversityNote =
     "algorithm (diversity.enabled does not change existing feeds), so the numbers are the "
     "phase-comparison baseline.";
 
+const char *kAdaptationNote =
+    "Preference-drift adaptation (Phase 10, TDD 18.6). Drift is scheduled per user cohort: when a "
+    "cohort user reaches atInteraction completed interactions, the simulator rebuilds their HIDDEN "
+    "preference from the event's topic mix (recommender-visible state is untouched at the drift "
+    "instant). The 'drifted' cohort = users in >= 1 event's cohort; 'control' = the rest. "
+    "drift_round = first_drift_interaction / feed_size (integer floor): the first round whose "
+    "feeds "
+    "can be affected, so rounds < drift_round are strictly pre-drift. pre_drift_reward = mean of "
+    "the "
+    "drifted cohort's per-round mean reward over up to the 3 rounds before drift_round (-1 if "
+    "drift_round == 0). trough_reward/round = min drifted-cohort round reward at/after "
+    "drift_round; "
+    "reward_drop = pre_drift_reward - trough_reward. recovery_round = first round >= drift_round "
+    "with "
+    "drifted reward >= 0.95*pre_drift_reward (recovery_interactions = (recovery_round - "
+    "drift_round + "
+    "1)*feed_size; both -1 if never/undefined). pre_drift_alignment = drifted-cohort est<->hidden "
+    "cosine at round drift_round-1; alignment_recovery_round = first round >= drift_round with "
+    "drifted "
+    "alignment >= 0.95*pre_drift_alignment -- the 'interactions until new preference detection' "
+    "reading. adaptation_window_regret = sum of the run's per-round SAMPLED oracle regret over "
+    "[drift_round, recovery_round|last] (whole-population, true-affinity units; see the regret "
+    "note). "
+    "learning_curve.csv gains four columns (drifted_mean_reward, control_mean_reward, "
+    "drifted_alignment, control_alignment); an empty cohort prints 'nan'. All values "
+    "deterministic.";
+
 // p50/p95/p99/mean/max/samples of a LatencyStats as a JSON object (wall-clock, D9).
 nlohmann::json latencyJson(const LatencyStats &l) {
     return nlohmann::json{{"p50", l.p50Ms},   {"p95", l.p95Ms}, {"p99", l.p99Ms},
@@ -198,6 +225,43 @@ void ResultsWriter::writeSummaryJson(const ExperimentResult &result) {
                            {"note", kColdStartNote}};
     }
 
+    // Preference-drift adaptation block (Phase 10, TDD 18.6): PRESENT only when drift is
+    // configured, so a non-drift run's summary.json carries no `adaptation` key (byte-identical to
+    // a pre-Phase-10 run's non-timing content). The plotting package depends on the exact key names
+    // `first_drift_interaction` and `pre_drift_reward`; the rest are documented in kAdaptationNote.
+    if (result.adaptation.configured) {
+        const AdaptationReport &a = result.adaptation;
+        nlohmann::json events = nlohmann::json::array();
+        for (const DriftEvent &e : result.config.drift.events) {
+            nlohmann::json mix = nlohmann::json::array();
+            for (const DriftTopicWeight &w : e.topicMix) {
+                mix.push_back({{"topic", w.topic}, {"weight", w.weight}});
+            }
+            events.push_back({{"at_interaction", e.atInteraction},
+                              {"cohort_lo", e.cohortLo},
+                              {"cohort_hi", e.cohortHi},
+                              {"topic_mix", mix}});
+        }
+        j["adaptation"] = {{"events", events},
+                           {"drifted_users", a.driftedUsers},
+                           {"control_users", a.controlUsers},
+                           {"first_drift_interaction", a.firstDriftInteraction},
+                           {"drift_round", a.driftRound},
+                           {"feed_size", a.feedSize},
+                           {"pre_drift_reward", a.preDriftReward},
+                           {"trough_reward", a.troughReward},
+                           {"trough_round", a.troughRound},
+                           {"reward_drop", a.rewardDrop},
+                           {"recovery_round", a.recoveryRound},
+                           {"recovery_interactions", a.recoveryInteractions},
+                           {"pre_drift_alignment", a.preDriftAlignment},
+                           {"post_drift_alignment_min", a.postDriftAlignmentMin},
+                           {"post_drift_alignment_min_round", a.postDriftAlignmentMinRound},
+                           {"alignment_recovery_round", a.alignmentRecoveryRound},
+                           {"adaptation_window_regret", a.adaptationWindowRegret},
+                           {"note", kAdaptationNote}};
+    }
+
     j["notes"] = {{"learning", result.learningEnabled ? kLearningEnabledNote : kLearningFrozenNote},
                   {"baseline_flags", kBaselineFlagsNote}};
 
@@ -268,12 +332,28 @@ void ResultsWriter::writeLearningCurveCsv(const ExperimentResult &result) {
     // across same-seed runs.
     const size_t feedSize = result.config.recommendation.feedSize;
     const size_t interactionsPerUser = result.config.simulation.interactionsPerUser;
+    // Phase 10 (TDD 18.6): when drift is configured, append the drifted/control cohort split as
+    // FOUR extra columns AFTER the legacy four. When NOT configured the format is byte-identical to
+    // a pre-Phase-10 run (the regression contract). An empty cohort (e.g. control under
+    // whole-population drift) prints the literal `nan` rather than a meaningless 0.0.
+    const bool drift = result.adaptation.configured;
     std::ofstream csv(result.directory / "learning_curve.csv");
-    csv << "round,interactions_per_user,mean_reward_per_impression,mean_estimated_hidden_cosine\n";
+    csv << "round,interactions_per_user,mean_reward_per_impression,mean_estimated_hidden_cosine";
+    if (drift) {
+        csv << ",drifted_mean_reward,control_mean_reward,drifted_alignment,control_alignment";
+    }
+    csv << '\n';
     for (const RoundMetrics &r : result.rounds) {
         const size_t interactions = std::min((r.round + 1) * feedSize, interactionsPerUser);
         csv << r.round << ',' << interactions << ',' << num(r.metrics.rewardPerImpression) << ','
-            << num(r.meanEstimatedHiddenCosine) << '\n';
+            << num(r.meanEstimatedHiddenCosine);
+        if (drift) {
+            csv << ',' << (r.driftedImpressions > 0 ? num(r.driftedMeanReward) : "nan") << ','
+                << (r.controlImpressions > 0 ? num(r.controlMeanReward) : "nan") << ','
+                << (r.driftedAlignUsers > 0 ? num(r.driftedAlignment) : "nan") << ','
+                << (r.controlAlignUsers > 0 ? num(r.controlAlignment) : "nan");
+        }
+        csv << '\n';
     }
 }
 

@@ -204,6 +204,38 @@ void from_json(const json &j, DiversityConfig &c) {
     readKey(j, "use_mmr", c.useMmr);
 }
 
+void to_json(json &j, const DriftTopicWeight &c) {
+    j = json{{"topic", c.topic}, {"weight", c.weight}};
+}
+
+void from_json(const json &j, DriftTopicWeight &c) {
+    ensureKnownKeys(j, "drift.events[].topic_mix[]", {"topic", "weight"});
+    readKey(j, "topic", c.topic);
+    readKey(j, "weight", c.weight);
+}
+
+void to_json(json &j, const DriftEvent &c) {
+    j = json{{"at_interaction", c.atInteraction},
+             {"cohort_lo", c.cohortLo},
+             {"cohort_hi", c.cohortHi},
+             {"topic_mix", c.topicMix}};
+}
+
+void from_json(const json &j, DriftEvent &c) {
+    ensureKnownKeys(j, "drift.events[]", {"at_interaction", "cohort_lo", "cohort_hi", "topic_mix"});
+    readKey(j, "at_interaction", c.atInteraction);
+    readKey(j, "cohort_lo", c.cohortLo);
+    readKey(j, "cohort_hi", c.cohortHi);
+    readKey(j, "topic_mix", c.topicMix);
+}
+
+void to_json(json &j, const DriftConfig &c) { j = json{{"events", c.events}}; }
+
+void from_json(const json &j, DriftConfig &c) {
+    ensureKnownKeys(j, "drift", {"events"});
+    readKey(j, "events", c.events);
+}
+
 void to_json(json &j, const BehaviourConfig &c) {
     j = json{{"alpha", c.alpha},
              {"beta", c.beta},
@@ -326,6 +358,7 @@ void to_json(json &j, const ExperimentConfig &c) {
              {"learning", c.learning},
              {"exploration", c.exploration},
              {"diversity", c.diversity},
+             {"drift", c.drift},
              {"behaviour", c.behaviour},
              {"reward", c.reward},
              {"evaluation", c.evaluation}};
@@ -334,7 +367,7 @@ void to_json(json &j, const ExperimentConfig &c) {
 void from_json(const json &j, ExperimentConfig &c) {
     ensureKnownKeys(j, "<top-level>",
                     {"simulation", "recommendation", "algorithm", "hnsw", "ranking", "learning",
-                     "exploration", "diversity", "behaviour", "reward", "evaluation"});
+                     "exploration", "diversity", "drift", "behaviour", "reward", "evaluation"});
     readKey(j, "simulation", c.simulation);
     readKey(j, "recommendation", c.recommendation);
     readKey(j, "algorithm", c.algorithm);
@@ -343,6 +376,7 @@ void from_json(const json &j, ExperimentConfig &c) {
     readKey(j, "learning", c.learning);
     readKey(j, "exploration", c.exploration);
     readKey(j, "diversity", c.diversity);
+    readKey(j, "drift", c.drift);
     readKey(j, "behaviour", c.behaviour);
     readKey(j, "reward", c.reward);
     readKey(j, "evaluation", c.evaluation);
