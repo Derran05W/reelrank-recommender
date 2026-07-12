@@ -35,6 +35,23 @@ struct RoundMetrics {
     // learning enabled it should trend up as estimates converge to the hidden preference; with
     // learning disabled (frozen arm) it is CONSTANT across rounds (estimates never change).
     double meanEstimatedHiddenCosine = 0.0;
+
+    // Diversity metrics (Phase 9, TDD 18.4), means over THIS round's feeds - one feed per request,
+    // measured on every request unsampled (the computation is trivial). `diversityFeeds` is the
+    // number of feeds aggregated this round (== the round's request count). The five means come
+    // from FeedDiversity (unique topics/creators, intra-list embedding cosine, topic/creator HHI).
+    // `repetitionCount` is the total repeat items this round and `repetitionRate` is
+    // repeats/total-feed-items - both expected 0 by construction (orchestrator seen-filter +
+    // dedup), published as live verification of the "duplicate/repetitive content eliminated" exit
+    // criterion. Deterministic (rng/clock-free): part of the byte-identical determinism guarantee.
+    std::size_t diversityFeeds = 0;
+    double meanUniqueTopics = 0.0;
+    double meanUniqueCreators = 0.0;
+    double meanIntraListSimilarity = 0.0;
+    double meanTopicConcentration = 0.0;   // topic HHI
+    double meanCreatorConcentration = 0.0; // creator HHI
+    std::size_t repetitionCount = 0;
+    double repetitionRate = 0.0;
 };
 
 // One row of new_user_curve.csv (Phase 8, TDD 18.5): the mean reward and mean oracle regret over
@@ -132,6 +149,22 @@ struct ExperimentResult {
     double retrievalRecallAt10 = 0.0;
     double retrievalRecallAt50 = 0.0;
     double retrievalDistanceError = 0.0;
+
+    // Overall diversity (Phase 9, TDD 18.4): means over ALL feeds in the run + the run's total
+    // repeat count. `diversityFeedCount` is the number of feeds measured (== requestCount).
+    // `totalRepetitions` is expected 0 by construction; `repetitionRate` is the run's pooled
+    // repeats/total-feed-items. Deterministic; surfaced in diversity_metrics.csv (per round) and
+    // the summary.json `diversity` block (these overall means). Emitted for EVERY run from Phase 9
+    // on - unlike the Phase 8 injection files, diversity_metrics.csv is UNCONDITIONAL (the
+    // diversity of any algorithm's feeds is the phase-comparison baseline).
+    std::size_t diversityFeedCount = 0;
+    double meanUniqueTopics = 0.0;
+    double meanUniqueCreators = 0.0;
+    double meanIntraListSimilarity = 0.0;
+    double meanTopicConcentration = 0.0;   // topic HHI
+    double meanCreatorConcentration = 0.0; // creator HHI
+    std::size_t totalRepetitions = 0;
+    double repetitionRate = 0.0;
 
     std::vector<RoundMetrics> rounds;
 

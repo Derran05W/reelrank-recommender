@@ -14,6 +14,7 @@
 namespace rr {
 
 class ExplorationCandidateSource;
+class Reranker;
 
 // TDD 7 / 13: the recommendation orchestrator. Given a fixed set of candidate sources it runs
 // them, merges + deduplicates their output (preserving all source labels), drops ineligible
@@ -50,15 +51,26 @@ class ExplorationCandidateSource;
 // two can never disagree. Non-exploration recommenders never carry the Exploration label, so this
 // is a no-op for them.
 //
-// Ownership: the Orchestrator holds NON-OWNING pointers to its sources, the ranker, and the
-// exploration source, plus a reference to the live reels vector. The owner (a Recommender) must
-// keep them all alive for the Orchestrator's lifetime.
+// DIVERSITY RE-RANKING (Phase 9, TDD 15). An optional trailing Reranker is applied ONLY on the
+// RANKED path (diversity recommenders always supply a ranker, mirroring the exploration-guarantee
+// precedent) and ONLY when request.enableDiversity is true. It runs inside the reranking Stopwatch
+// AFTER applyExplorationGuarantee: the guarantee reorders the pool FIRST, so the constraint
+// selection walks the guarantee-promoted order — promoted exploration items are taken unless they
+// violate a hard cap. Caps take precedence, so delivered exploration slots may fall below g;
+// deterministic and accepted (documented at the call site). When the gate is false (no reranker, or
+// enableDiversity false, or the identity path) behaviour is byte-identical to Phase 8. The
+// reranker sees only each reel's REPRESENTATIVE single source label; the Orchestrator restores the
+// full merged multi-source label set onto every returned RankedReel afterwards.
+//
+// Ownership: the Orchestrator holds NON-OWNING pointers to its sources, the ranker, the exploration
+// source, and the reranker, plus a reference to the live reels vector. The owner (a Recommender)
+// must keep them all alive for the Orchestrator's lifetime.
 class Orchestrator {
   public:
     Orchestrator(std::vector<CandidateGenerator *> sources, const std::vector<Reel> &reels,
                  const Ranker *ranker = nullptr,
                  const ExplorationCandidateSource *explorationSource = nullptr,
-                 uint32_t guaranteedSlots = 0);
+                 uint32_t guaranteedSlots = 0, const Reranker *reranker = nullptr);
 
     RecommendationResponse recommend(const User &user, const RecommendationRequest &request);
 
@@ -73,6 +85,7 @@ class Orchestrator {
     const Ranker *ranker_;
     const ExplorationCandidateSource *explorationSource_;
     uint32_t guaranteedSlots_;
+    const Reranker *reranker_;
 };
 
 } // namespace rr

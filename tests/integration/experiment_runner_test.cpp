@@ -432,3 +432,132 @@ TEST(ExperimentRunnerTest, ExplorationFlagFlipIsInertForNonExplorationAlgorithm)
             << name << " changed when exploration.enabled flipped (should be inert)";
     }
 }
+
+// (l) Diversity metrics (Phase 9, TDD 18.4): diversity_metrics.csv is written for EVERY run with
+// one row per round, and every value sits in its valid range (topics/creators in [1, feedSize], HHI
+// in (0, 1], intra-list similarity in [-1, 1], repetition rate 0). The summary.json diversity block
+// mirrors the overall figures.
+TEST(ExperimentRunnerTest, DiversityMetricsEmittedWithValidRanges) {
+    const fs::path root = fs::path(::testing::TempDir()) / "rr_exp_diversity";
+    fs::remove_all(root);
+
+    const ExperimentConfig config = tinyConfig(RecommendationAlgorithm::HnswRanker);
+    ExperimentRunner runner(config, root);
+    const ExperimentResult result = runner.run();
+
+    ASSERT_TRUE(fs::exists(result.directory / "diversity_metrics.csv"));
+    EXPECT_EQ(readCsvHeader(result.directory / "diversity_metrics.csv"),
+              "round,mean_unique_topics,mean_unique_creators,mean_intra_list_similarity,"
+              "mean_topic_hhi,mean_creator_hhi,repetition_rate");
+
+    auto rows = readCsvRows(result.directory / "diversity_metrics.csv");
+    ASSERT_EQ(rows.size(), result.rounds.size()); // one row per round
+    const double feedSize = static_cast<double>(config.recommendation.feedSize);
+    for (const auto &row : rows) {
+        ASSERT_EQ(row.size(), 7u);
+        const double topics = std::stod(row[1]);
+        const double creators = std::stod(row[2]);
+        const double sim = std::stod(row[3]);
+        const double topicHhi = std::stod(row[4]);
+        const double creatorHhi = std::stod(row[5]);
+        const double repetition = std::stod(row[6]);
+        EXPECT_GE(topics, 1.0);
+        EXPECT_LE(topics, feedSize);
+        EXPECT_GE(creators, 1.0);
+        EXPECT_LE(creators, feedSize);
+        EXPECT_GE(sim, -1.0);
+        EXPECT_LE(sim, 1.0);
+        EXPECT_GT(topicHhi, 0.0);
+        EXPECT_LE(topicHhi, 1.0);
+        EXPECT_GT(creatorHhi, 0.0);
+        EXPECT_LE(creatorHhi, 1.0);
+        EXPECT_DOUBLE_EQ(repetition, 0.0);
+    }
+
+    // In-memory overall figures line up with the summary.json diversity block.
+    EXPECT_EQ(result.diversityFeedCount, result.requestCount);
+    EXPECT_GE(result.meanUniqueTopics, 1.0);
+    EXPECT_LE(result.meanUniqueTopics, feedSize);
+    EXPECT_EQ(result.totalRepetitions, 0u);
+    EXPECT_DOUBLE_EQ(result.repetitionRate, 0.0);
+
+    std::ifstream in(result.directory / "summary.json");
+    nlohmann::json j;
+    in >> j;
+    ASSERT_TRUE(j.contains("diversity"));
+    const auto &d = j.at("diversity");
+    EXPECT_EQ(d.at("feeds").get<size_t>(), result.requestCount);
+    EXPECT_DOUBLE_EQ(d.at("mean_unique_topics").get<double>(), result.meanUniqueTopics);
+    EXPECT_DOUBLE_EQ(d.at("mean_intra_list_similarity").get<double>(),
+                     result.meanIntraListSimilarity);
+    EXPECT_EQ(d.at("repetition_total").get<size_t>(), 0u);
+    EXPECT_DOUBLE_EQ(d.at("repetition_rate").get<double>(), 0.0);
+}
+
+// (m) diversity_metrics.csv is deterministic: same config + seed twice -> byte-identical file
+// (extends the determinism contract to the Phase 9 file).
+TEST(ExperimentRunnerTest, DiversityMetricsDeterministicByteIdentical) {
+    const fs::path rootA = fs::path(::testing::TempDir()) / "rr_exp_div_det_a";
+    const fs::path rootB = fs::path(::testing::TempDir()) / "rr_exp_div_det_b";
+    fs::remove_all(rootA);
+    fs::remove_all(rootB);
+
+    ExperimentRunner runnerA(tinyConfig(RecommendationAlgorithm::HnswRanker), rootA);
+    ExperimentRunner runnerB(tinyConfig(RecommendationAlgorithm::HnswRanker), rootB);
+    const ExperimentResult a = runnerA.run();
+    const ExperimentResult b = runnerB.run();
+
+    EXPECT_EQ(readFile(a.directory / "diversity_metrics.csv"),
+              readFile(b.directory / "diversity_metrics.csv"))
+        << "diversity_metrics.csv differs between two same-seed runs";
+}
+
+// (n) Live verification of the Phase 9 "duplicate/repetitive content eliminated" exit criterion:
+// the repetition rate is EXACTLY 0 across the whole run (no seen reel is re-served and no feed
+// contains a duplicate id), for every round and overall.
+TEST(ExperimentRunnerTest, RepetitionRateIsZeroAcrossRun) {
+    const fs::path root = fs::path(::testing::TempDir()) / "rr_exp_div_norepeat";
+    fs::remove_all(root);
+
+    ExperimentRunner runner(tinyConfig(RecommendationAlgorithm::HnswRanker), root);
+    const ExperimentResult result = runner.run();
+
+    EXPECT_EQ(result.totalRepetitions, 0u);
+    EXPECT_DOUBLE_EQ(result.repetitionRate, 0.0);
+    for (const RoundMetrics &r : result.rounds) {
+        EXPECT_EQ(r.repetitionCount, 0u) << "round " << r.round << " served a repeat";
+        EXPECT_DOUBLE_EQ(r.repetitionRate, 0.0);
+    }
+    for (const auto &row : readCsvRows(result.directory / "diversity_metrics.csv")) {
+        ASSERT_EQ(row.size(), 7u);
+        EXPECT_DOUBLE_EQ(std::stod(row[6]), 0.0); // repetition_rate column
+    }
+}
+
+// (o) enableDiversity is config-driven since Phase 9 but read by NO existing recommender, so
+// toggling diversity.enabled leaves an existing algorithm's deterministic metric CSVs (including
+// diversity_metrics.csv itself, since the feeds are identical) byte-identical TODAY. This proves
+// the flag alone changes nothing for existing algorithms. (config.json differs by the
+// diversity.enabled value, so it is intentionally excluded from the comparison.)
+TEST(ExperimentRunnerTest, DiversityFlagFlipIsInertForExistingAlgorithm) {
+    const fs::path rootOn = fs::path(::testing::TempDir()) / "rr_exp_div_on";
+    const fs::path rootOff = fs::path(::testing::TempDir()) / "rr_exp_div_off";
+    fs::remove_all(rootOn);
+    fs::remove_all(rootOff);
+
+    ExperimentConfig on = tinyConfig(RecommendationAlgorithm::HnswRanker);
+    on.diversity.enabled = true;
+    ExperimentConfig off = tinyConfig(RecommendationAlgorithm::HnswRanker);
+    off.diversity.enabled = false;
+
+    ExperimentRunner runnerOn(on, rootOn);
+    ExperimentRunner runnerOff(off, rootOff);
+    const ExperimentResult a = runnerOn.run();
+    const ExperimentResult b = runnerOff.run();
+
+    for (const char *name : {"retrieval_metrics.csv", "recommendation_metrics.csv",
+                             "diversity_metrics.csv", "learning_curve.csv", "regret_curve.csv"}) {
+        EXPECT_EQ(readFile(a.directory / name), readFile(b.directory / name))
+            << name << " changed when diversity.enabled flipped (should be inert)";
+    }
+}

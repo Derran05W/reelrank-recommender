@@ -190,15 +190,18 @@ void to_json(json &j, const DiversityConfig &c) {
     j = json{{"enabled", c.enabled},
              {"max_per_creator", c.maxPerCreator},
              {"max_per_topic", c.maxPerTopic},
-             {"mmr_lambda", c.mmrLambda}};
+             {"mmr_lambda", c.mmrLambda},
+             {"use_mmr", c.useMmr}};
 }
 
 void from_json(const json &j, DiversityConfig &c) {
-    ensureKnownKeys(j, "diversity", {"enabled", "max_per_creator", "max_per_topic", "mmr_lambda"});
+    ensureKnownKeys(j, "diversity",
+                    {"enabled", "max_per_creator", "max_per_topic", "mmr_lambda", "use_mmr"});
     readKey(j, "enabled", c.enabled);
     readKey(j, "max_per_creator", c.maxPerCreator);
     readKey(j, "max_per_topic", c.maxPerTopic);
     readKey(j, "mmr_lambda", c.mmrLambda);
+    readKey(j, "use_mmr", c.useMmr);
 }
 
 void to_json(json &j, const BehaviourConfig &c) {

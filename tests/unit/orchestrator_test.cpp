@@ -19,6 +19,7 @@
 #include "rr/infrastructure/clock.hpp"
 #include "rr/infrastructure/random.hpp"
 #include "rr/recommendation/ranker.hpp"
+#include "rr/recommendation/reranker.hpp"
 
 namespace {
 
@@ -536,4 +537,131 @@ TEST(OrchestratorTest, GuaranteeCountsMultiLabelReelAsExploration) {
     const rr::RankedReel &reel5 = feedById(resp, 5);
     EXPECT_TRUE(hasSource(reel5, rr::CandidateSource::VectorHNSW));
     EXPECT_TRUE(hasSource(reel5, rr::CandidateSource::Exploration));
+}
+
+// --- Diversity re-ranking plug-in (Phase 9, task 4). A stub Reranker whose ONLY observable effect
+// is to REVERSE the ranked pool (then truncate to feedSize) lets us prove: the gate is inert unless
+// a reranker is wired AND request.enableDiversity is set AND we are on the RANKED path; and that
+// the full merged multi-source label set is restored onto the reranked feed (the stub only sees /
+// emits the single representative label per reel).
+
+namespace {
+
+class ReverseReranker final : public rr::Reranker {
+  public:
+    std::vector<rr::RankedReel> rerank(const rr::User &, const std::vector<rr::Candidate> &pool,
+                                       std::size_t feedSize) const override {
+        std::vector<rr::RankedReel> out;
+        const std::size_t n = std::min(feedSize, pool.size());
+        for (std::size_t i = 0; i < n; ++i) {
+            const rr::Candidate &c = pool[pool.size() - 1 - i]; // reverse of the ranked order
+            rr::RankedReel r{};
+            r.reelId = c.reelId;
+            r.score = c.rankingScore;
+            r.rank = i;
+            r.sources = {
+                c.source}; // single representative label only; orchestrator restores full set
+            r.featureContributions = c.featureContributions;
+            out.push_back(std::move(r));
+        }
+        return out;
+    }
+};
+
+rr::RecommendationRequest diversityRequest(std::size_t feedSize, std::size_t candidateLimit,
+                                           bool enableDiversity) {
+    rr::RecommendationRequest req{};
+    req.userId = rr::UserId{0};
+    req.feedSize = feedSize;
+    req.candidateLimit = candidateLimit;
+    req.enableDiversity = enableDiversity;
+    return req;
+}
+
+} // namespace
+
+TEST(OrchestratorTest, DiversityGateInertWhenDisabledMatchesNoReranker) {
+    // FakeRanker orders ascending similarity => ranked pool [3,2,1,0]. A no-reranker Orchestrator
+    // and a reranker-wired one with enableDiversity=false must produce byte-identical feeds (gate
+    // off).
+    std::vector<rr::Reel> reels = makeReels(4);
+    FakeSource src({cand(0, rr::CandidateSource::VectorHNSW, 0.1f, 0.9f),
+                    cand(1, rr::CandidateSource::VectorHNSW, 0.2f, 0.8f),
+                    cand(2, rr::CandidateSource::VectorHNSW, 0.3f, 0.7f),
+                    cand(3, rr::CandidateSource::VectorHNSW, 0.4f, 0.6f)});
+    FakeRanker ranker;
+    ReverseReranker reranker;
+    rr::User user{};
+
+    FakeSource srcA(src);
+    rr::Orchestrator noReranker({&srcA}, reels, &ranker);
+    FakeSource srcB(src);
+    rr::Orchestrator withReranker({&srcB}, reels, &ranker, nullptr, 0, &reranker);
+
+    const std::vector<uint32_t> baseline = feedIds(noReranker.recommend(user, request(10, 10)));
+    const std::vector<uint32_t> gatedOff =
+        feedIds(withReranker.recommend(user, diversityRequest(10, 10, /*enableDiversity=*/false)));
+    EXPECT_EQ(baseline, (std::vector<uint32_t>{3, 2, 1, 0}));
+    EXPECT_EQ(gatedOff, baseline); // enableDiversity=false => reranker never runs
+}
+
+TEST(OrchestratorTest, DiversityRerankerAppliedWhenEnabled) {
+    // Same setup; with enableDiversity=true the ReverseReranker reverses [3,2,1,0] -> [0,1,2,3],
+    // and the reranking latency field is populated.
+    std::vector<rr::Reel> reels = makeReels(4);
+    FakeSource src({cand(0, rr::CandidateSource::VectorHNSW, 0.1f, 0.9f),
+                    cand(1, rr::CandidateSource::VectorHNSW, 0.2f, 0.8f),
+                    cand(2, rr::CandidateSource::VectorHNSW, 0.3f, 0.7f),
+                    cand(3, rr::CandidateSource::VectorHNSW, 0.4f, 0.6f)});
+    FakeRanker ranker;
+    ReverseReranker reranker;
+    rr::Orchestrator orch({&src}, reels, &ranker, nullptr, 0, &reranker);
+    rr::User user{};
+
+    const rr::RecommendationResponse resp =
+        orch.recommend(user, diversityRequest(10, 10, /*enableDiversity=*/true));
+    EXPECT_EQ(feedIds(resp), (std::vector<uint32_t>{0, 1, 2, 3}));
+    for (std::size_t i = 0; i < resp.reels.size(); ++i) {
+        EXPECT_EQ(resp.reels[i].rank, i); // ranks are the reranker's 0..n-1
+    }
+    EXPECT_GE(resp.rerankingLatencyMs, 0.0);
+}
+
+TEST(OrchestratorTest, DiversityRerankerRestoresFullMultiSourceLabels) {
+    // reel 0 is produced by two sources; after diversity reranking the RankedReel must still carry
+    // BOTH labels even though the reranker only ever saw/emitted the single representative label.
+    std::vector<rr::Reel> reels = makeReels(2);
+    FakeSource hnsw({cand(0, rr::CandidateSource::VectorHNSW, 0.3f, 0.9f),
+                     cand(1, rr::CandidateSource::VectorHNSW, 0.4f, 0.6f)});
+    FakeSource exact({cand(0, rr::CandidateSource::VectorExact, 0.3f, 0.9f)});
+    FakeRanker ranker;
+    ReverseReranker reranker;
+    rr::Orchestrator orch({&hnsw, &exact}, reels, &ranker, nullptr, 0, &reranker);
+    rr::User user{};
+
+    const rr::RecommendationResponse resp =
+        orch.recommend(user, diversityRequest(10, 10, /*enableDiversity=*/true));
+    ASSERT_EQ(resp.reels.size(), 2u);
+    const rr::RankedReel &reel0 = feedById(resp, 0);
+    EXPECT_EQ(reel0.sources.size(), 2u);
+    EXPECT_TRUE(hasSource(reel0, rr::CandidateSource::VectorHNSW));
+    EXPECT_TRUE(hasSource(reel0, rr::CandidateSource::VectorExact));
+}
+
+TEST(OrchestratorTest, DiversityRerankerInertOnIdentityPath) {
+    // Identity (nullptr ranker) path: diversity reranking is RANKED-path only, so even with a
+    // reranker wired and enableDiversity=true the feed stays in identity (descending similarity)
+    // order — the ReverseReranker is never invoked.
+    std::vector<rr::Reel> reels = makeReels(4);
+    FakeSource src({cand(0, rr::CandidateSource::VectorHNSW, 0.1f, 0.9f),
+                    cand(1, rr::CandidateSource::VectorHNSW, 0.2f, 0.8f),
+                    cand(2, rr::CandidateSource::VectorHNSW, 0.3f, 0.7f),
+                    cand(3, rr::CandidateSource::VectorHNSW, 0.4f, 0.6f)});
+    ReverseReranker reranker;
+    rr::Orchestrator orch({&src}, reels, /*ranker=*/nullptr, nullptr, 0, &reranker);
+    rr::User user{};
+
+    const rr::RecommendationResponse resp =
+        orch.recommend(user, diversityRequest(10, 10, /*enableDiversity=*/true));
+    EXPECT_EQ(feedIds(resp), (std::vector<uint32_t>{0, 1, 2, 3})); // identity order, unreversed
 }

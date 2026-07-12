@@ -173,6 +173,7 @@ TEST(ConfigTest, RoundTrip) {
     c.learning.sessionWeight = 0.31;
     c.exploration.epsilon = 0.09;
     c.diversity.mmrLambda = 0.66;
+    c.diversity.useMmr = false;
     c.behaviour.alpha = 3.3;
     c.behaviour.skipBias = 0.8;
     c.reward.shareWeight = 0.25;

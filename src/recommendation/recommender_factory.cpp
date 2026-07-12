@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "rr/recommendation/exact_vector_recommender.hpp"
+#include "rr/recommendation/full_recommender.hpp"
 #include "rr/recommendation/hnsw_exploration_recommender.hpp"
 #include "rr/recommendation/hnsw_ranker_recommender.hpp"
 #include "rr/recommendation/hnsw_recommender.hpp"
@@ -36,14 +37,6 @@ void validateDenseIds(const RecommenderDeps &deps) {
     }
 }
 
-// The ranker/diversity/exploration algorithms are delivered in later phases. Name the algorithm
-// and the phase that delivers it so a misconfigured experiment fails loudly.
-[[noreturn]] void throwUnimplemented(RecommendationAlgorithm algorithm, int phase) {
-    throw std::invalid_argument(std::string("makeRecommender: algorithm '") + toString(algorithm) +
-                                "' is not yet implemented; it is delivered in Phase " +
-                                std::to_string(phase));
-}
-
 } // namespace
 
 std::unique_ptr<Recommender> makeRecommender(RecommendationAlgorithm algorithm,
@@ -63,7 +56,7 @@ std::unique_ptr<Recommender> makeRecommender(RecommendationAlgorithm algorithm,
     case RecommendationAlgorithm::HnswRankerExploration:
         return std::make_unique<HNSWExplorationRecommender>(deps, std::move(rng));
     case RecommendationAlgorithm::HnswRankerDiversity:
-        throwUnimplemented(algorithm, 9); // diversity reranking
+        return std::make_unique<FullRecommender>(deps, std::move(rng));
     }
     throw std::invalid_argument("makeRecommender: unknown RecommendationAlgorithm value");
 }

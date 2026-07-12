@@ -46,13 +46,13 @@ const char *kRegretUnitsNote =
     "the monotone core of the reward (TDD 10.1/10.5).";
 
 const char *kBaselineFlagsNote =
-    "Requests set enableExploration = exploration.enabled (config-driven since Phase 8; no "
-    "existing "
-    "recommender reads it, so it is inert for every non-exploration algorithm) and "
-    "enableDiversity=false; candidateLimit = recommendation.vectorCandidates; requestTime = "
-    "simulator logical clock; sessionId = the most recent interaction's session (SessionId{0} "
-    "before "
-    "any interaction).";
+    "Requests set enableExploration = exploration.enabled (config-driven since Phase 8) and "
+    "enableDiversity = diversity.enabled (config-driven since Phase 9). No existing recommender "
+    "reads either flag, so both are inert for every non-exploration / non-diversity algorithm - "
+    "the "
+    "sibling orchestrator's gates are their only readers. candidateLimit = "
+    "recommendation.vectorCandidates; requestTime = simulator logical clock; sessionId = the most "
+    "recent interaction's session (SessionId{0} before any interaction).";
 
 const char *kRetrievalNote =
     "Live retrieval quality (TDD 18.1) on a Bernoulli(retrieval_sample_rate) subset of requests: "
@@ -82,6 +82,20 @@ const char *kColdStartNote =
     "the "
     "target (-1 if undefined or not reached within the first 100 impressions). Curves are in "
     "new_user_curve.csv / new_reel_exposure.csv; all values are deterministic.";
+
+const char *kDiversityNote =
+    "Per-feed diversity (Phase 9, TDD 18.4), measured on EVERY request (unsampled: a feedSize-10 "
+    "feed is 45 dot products) from the feed AS PRESENTED, before its impressions are stepped, so "
+    "the seen-set is the pre-feed state. unique_topics/creators = distinct primaryTopic/creatorId "
+    "counts; intra_list_similarity = mean pairwise embedding cosine (0 for feeds with <2 items); "
+    "topic_hhi/creator_hhi = Herfindahl-Hirschman index over topic/creator shares (sum of squared "
+    "shares: 1.0 = one topic, 1/k = uniform over k distinct). repetition_rate = fraction of feed "
+    "items that were shown to the user earlier this run OR duplicated within the feed - expected 0 "
+    "by construction (the orchestrator seen-filters and de-duplicates), published as live "
+    "verification of the 'duplicate/repetitive content eliminated' exit criterion. The per-round "
+    "curve is in diversity_metrics.csv; all values are deterministic. This is measured for ANY "
+    "algorithm (diversity.enabled does not change existing feeds), so the numbers are the "
+    "phase-comparison baseline.";
 
 // p50/p95/p99/mean/max/samples of a LatencyStats as a JSON object (wall-clock, D9).
 nlohmann::json latencyJson(const LatencyStats &l) {
@@ -145,6 +159,20 @@ void ResultsWriter::writeSummaryJson(const ExperimentResult &result) {
         {"recall_at_50", result.retrievalRecallAt50},
         {"mean_distance_error", result.retrievalDistanceError},
         {"note", result.retrievalApplicable ? kRetrievalNote : kRetrievalNotApplicableNote}};
+
+    // Diversity block (Phase 9, TDD 18.4): overall means over every feed + the run's total repeat
+    // count. UNCONDITIONAL - present for every run (diversity is measurable for any algorithm), so
+    // the phase comparison has baseline numbers. Deterministic (rng/clock-free). `repetition_total`
+    // is expected 0 by construction (note explains).
+    j["diversity"] = {{"feeds", result.diversityFeedCount},
+                      {"mean_unique_topics", result.meanUniqueTopics},
+                      {"mean_unique_creators", result.meanUniqueCreators},
+                      {"mean_intra_list_similarity", result.meanIntraListSimilarity},
+                      {"mean_topic_hhi", result.meanTopicConcentration},
+                      {"mean_creator_hhi", result.meanCreatorConcentration},
+                      {"repetition_total", result.totalRepetitions},
+                      {"repetition_rate", result.repetitionRate},
+                      {"note", kDiversityNote}};
 
     // Cold-start / injection block (Phase 8, TDD 18.5): PRESENT only when injection is configured,
     // so a non-configured run's summary.json carries no `cold_start` key (byte-identical to a
@@ -211,6 +239,23 @@ void ResultsWriter::writeRecommendationMetricsCsv(const ExperimentResult &result
             << num(m.followRate) << ',' << num(m.meanSessionLength) << ','
             << num(m.rewardPerImpression) << ',' << num(m.rewardPerSession) << ','
             << num(m.meanTrueAffinity) << '\n';
+    }
+}
+
+void ResultsWriter::writeDiversityMetricsCsv(const ExperimentResult &result) {
+    // Per-feed diversity (Phase 9, TDD 18.4), one row per round: the means over that round's feeds
+    // plus the round's repetition rate (repeats / total feed items). Deterministic (num() fixed
+    // precision, classic locale): byte-identical across same-seed runs and part of the determinism
+    // guarantee. Written UNCONDITIONALLY (unlike the Phase 8 injection files) - diversity is
+    // measurable for any algorithm and is the phase-comparison baseline. repetition_rate is
+    // expected 0 by construction (see the summary.json diversity note).
+    std::ofstream csv(result.directory / "diversity_metrics.csv");
+    csv << "round,mean_unique_topics,mean_unique_creators,mean_intra_list_similarity,"
+           "mean_topic_hhi,mean_creator_hhi,repetition_rate\n";
+    for (const RoundMetrics &r : result.rounds) {
+        csv << r.round << ',' << num(r.meanUniqueTopics) << ',' << num(r.meanUniqueCreators) << ','
+            << num(r.meanIntraListSimilarity) << ',' << num(r.meanTopicConcentration) << ','
+            << num(r.meanCreatorConcentration) << ',' << num(r.repetitionRate) << '\n';
     }
 }
 
@@ -288,6 +333,9 @@ void ResultsWriter::writeAll(const ExperimentResult &result, const RunMetadata &
     writeSummaryJson(result);
     writeRetrievalMetricsCsv(result);
     writeRecommendationMetricsCsv(result);
+    // Phase 9: UNCONDITIONAL (diversity is measurable for any algorithm) - adds one file for every
+    // run without perturbing any pre-existing file.
+    writeDiversityMetricsCsv(result);
     writeLearningCurveCsv(result);
     writeRegretCurveCsv(result);
     writeLatencyMetricsCsv(result);

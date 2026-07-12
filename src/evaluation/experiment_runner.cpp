@@ -18,6 +18,7 @@
 #include "rr/domain/reel.hpp"
 #include "rr/domain/user.hpp"
 #include "rr/evaluation/cold_start.hpp"
+#include "rr/evaluation/diversity_metrics.hpp"
 #include "rr/evaluation/oracle.hpp"
 #include "rr/evaluation/results_writer.hpp"
 #include "rr/evaluation/retrieval_evaluator.hpp"
@@ -130,6 +131,11 @@ ExperimentResult ExperimentRunner::run() {
     // Estimate<->hidden alignment (TDD 18.5), one mean per round measured after the round
     // completes.
     std::vector<double> alignmentByRound(rounds, 0.0);
+    // Per-feed diversity (Phase 9, TDD 18.4). Accumulated on EVERY request (unsampled: the
+    // computation is trivial) from the feed AS PRESENTED, before its impressions are stepped. Its
+    // means feed diversity_metrics.csv + the summary.json diversity block. Deterministic
+    // (rng/clock-free), so it is stream-neutral (D8) and part of the byte-identical guarantee.
+    DiversityAccumulator diversityByRound(rounds);
 
     std::vector<double> latencies;
     std::vector<double> retrievalLatencies;
@@ -233,7 +239,13 @@ ExperimentResult ExperimentRunner::run() {
             // byte-identical to a pre-Phase-8 run regardless of exploration.enabled. (grep: the
             // only readers are this assignment and a summary.json note string.)
             req.enableExploration = config_.exploration.enabled;
-            req.enableDiversity = false;
+            // Config-driven from Phase 9 (was hard-false). VERIFIED by whole-repo grep: no existing
+            // recommender, orchestrator, or candidate source reads req.enableDiversity today - the
+            // sibling package's new orchestrator diversity gate will be its ONLY reader - so every
+            // existing algorithm's output stays byte-identical regardless of diversity.enabled.
+            // (The only current readers of the field are this assignment and a summary.json note
+            // string.)
+            req.enableDiversity = config_.diversity.enabled;
             req.requestTime = sim.now();
 
             // Time ONLY the recommend() call (D9 wall clock only here).
@@ -246,6 +258,21 @@ ExperimentResult ExperimentRunner::run() {
             rankingLatencies.push_back(resp.rankingLatencyMs);
             rerankingLatencies.push_back(resp.rerankingLatencyMs);
             ++requestCount;
+
+            // Feed reel ids, extracted ONCE for both the diversity metrics and the oracle below.
+            std::vector<ReelId> feedReelIds;
+            feedReelIds.reserve(resp.reels.size());
+            for (const RankedReel &ranked : resp.reels) {
+                feedReelIds.push_back(ranked.reelId);
+            }
+
+            // Per-feed diversity (Phase 9, TDD 18.4). Measured HERE - after recommend() returns but
+            // BEFORE the impression loop below steps the simulator - so user.seenReels is still the
+            // pre-feed ("as of presentation") set. VERIFIED: seenReels is mutated only inside
+            // Simulator::step (user.seenReels.insert(reel.id)), which runs in the consume loop
+            // further down, so nothing shown by THIS feed is in the seen-set yet. Unsampled: the
+            // computation is trivial (feedSize dot products) and diversity is reported per feed.
+            diversityByRound.add(round, feedReelIds, ds.reels, user.seenReels);
 
             // Oracle sampling: draw for EVERY request so the oracle stream stays aligned across
             // runs regardless of the outcome (D8). This Bernoulli draw is UNCONDITIONAL and
@@ -264,16 +291,11 @@ ExperimentResult ExperimentRunner::run() {
 
             double coldStartRequestRegret = 0.0;
             if (sampled || forceColdStart) {
-                std::vector<ReelId> feedIds;
-                feedIds.reserve(resp.reels.size());
-                for (const RankedReel &ranked : resp.reels) {
-                    feedIds.push_back(ranked.reelId);
-                }
                 // seen-set snapshot is the pre-feed state: the oracle scores what was available
-                // BEFORE this feed is consumed.
+                // BEFORE this feed is consumed. `feedReelIds` was extracted above.
                 const OracleResult oracle =
                     computeOracleRegret(ds.hiddenStates[u].hiddenPreference, ds.reels,
-                                        user.seenReels, feedIds, feedSize);
+                                        user.seenReels, feedReelIds, feedSize);
                 // Gate-fired samples feed the GLOBAL aggregate exactly as before (injected users'
                 // gate-fired samples are INCLUDED, unchanged). Forced evaluations feed ONLY the
                 // cold-start accumulators below - never double-counted into the global aggregate.
@@ -427,6 +449,18 @@ ExperimentResult ExperimentRunner::run() {
             rm.meanDistanceError = racc.distErrorSum / n;
         }
         rm.meanEstimatedHiddenCosine = alignmentByRound[r];
+
+        // Per-round diversity means (Phase 9, TDD 18.4).
+        const DiversitySummary dsum = diversityByRound.roundSummary(r);
+        rm.diversityFeeds = dsum.feeds;
+        rm.meanUniqueTopics = dsum.meanUniqueTopics;
+        rm.meanUniqueCreators = dsum.meanUniqueCreators;
+        rm.meanIntraListSimilarity = dsum.meanIntraListSimilarity;
+        rm.meanTopicConcentration = dsum.meanTopicConcentration;
+        rm.meanCreatorConcentration = dsum.meanCreatorConcentration;
+        rm.repetitionCount = dsum.totalRepeats;
+        rm.repetitionRate = dsum.repetitionRate;
+
         result.rounds.push_back(rm);
 
         totalSampled += regretByRound[r].sampled;
@@ -449,6 +483,17 @@ ExperimentResult ExperimentRunner::run() {
         result.retrievalRecallAt50 = totalRecall50Sum / n;
         result.retrievalDistanceError = totalDistErrorSum / n;
     }
+
+    // Overall diversity (Phase 9, TDD 18.4): pooled means over EVERY feed in the run.
+    const DiversitySummary diversityOverall = diversityByRound.overall();
+    result.diversityFeedCount = diversityOverall.feeds;
+    result.meanUniqueTopics = diversityOverall.meanUniqueTopics;
+    result.meanUniqueCreators = diversityOverall.meanUniqueCreators;
+    result.meanIntraListSimilarity = diversityOverall.meanIntraListSimilarity;
+    result.meanTopicConcentration = diversityOverall.meanTopicConcentration;
+    result.meanCreatorConcentration = diversityOverall.meanCreatorConcentration;
+    result.totalRepetitions = diversityOverall.totalRepeats;
+    result.repetitionRate = diversityOverall.repetitionRate;
 
     result.latency = latencyStats(latencies);
     result.retrievalLatency = latencyStats(retrievalLatencies);

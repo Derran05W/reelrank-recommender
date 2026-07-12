@@ -89,12 +89,16 @@ TEST(RecommenderFactoryTest, HnswRankerExplorationConstructsAndExposesRetrievalI
     EXPECT_EQ(rec->retrievalIndex()->size(), fx.reels.size());
 }
 
-TEST(RecommenderFactoryTest, UnimplementedAlgorithmsThrowInvalidArgument) {
+TEST(RecommenderFactoryTest, HnswRankerDiversityConstructsAndExposesRetrievalIndex) {
     Fixture fx;
-    // The diversity variant still arrives in Phase 9.
-    EXPECT_THROW(rr::makeRecommender(rr::RecommendationAlgorithm::HnswRankerDiversity, fx.deps(),
-                                     rr::Rng(1)),
-                 std::invalid_argument);
+    // Delivered in Phase 9: dispatches to FullRecommender (TDD 16.6) with the TDD 18.1 hook wired.
+    // Every TDD 16 algorithm is now implemented, so no throwing "unimplemented" cases remain.
+    auto rec = rr::makeRecommender(rr::RecommendationAlgorithm::HnswRankerDiversity, fx.deps(),
+                                   rr::Rng(1));
+    ASSERT_NE(rec, nullptr);
+    EXPECT_EQ(rec->name(), "hnsw_ranker_diversity");
+    ASSERT_NE(rec->retrievalIndex(), nullptr);
+    EXPECT_EQ(rec->retrievalIndex()->size(), fx.reels.size());
 }
 
 TEST(RecommenderFactoryTest, NonDenseReelIdsThrow) {

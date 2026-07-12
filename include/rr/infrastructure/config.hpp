@@ -153,6 +153,11 @@ struct DiversityConfig {
     uint32_t maxPerCreator = 2;
     uint32_t maxPerTopic = 3;
     double mmrLambda = 0.75;
+    // Phase 9: selects between the two diversity re-ranking modes the experiments compare —
+    // constraints only (false) vs constraints + MMR ordering within them (true, TDD 15.2). An
+    // addition to the TDD 21 example, mandated by the phase-9 experiment arms (hnsw_ranker vs
+    // +constraints vs +constraints+MMR).
+    bool useMmr = true;
     bool operator==(const DiversityConfig &) const = default;
 };
 

@@ -9,7 +9,15 @@ namespace rr {
 
 // Serializes an ExperimentResult to the §26 output layout in `result.directory`:
 //   config.json, summary.json, retrieval_metrics.csv, recommendation_metrics.csv,
-//   learning_curve.csv, regret_curve.csv, latency_metrics.csv, metadata.json.
+//   diversity_metrics.csv, learning_curve.csv, regret_curve.csv, latency_metrics.csv,
+//   metadata.json.
+//
+// Phase 9 diversity addition: diversity_metrics.csv (TDD 18.4) and a `diversity` block in
+// summary.json are written UNCONDITIONALLY for every run from Phase 9 on - the diversity of ANY
+// algorithm's feeds is measurable and the phase comparison needs baseline numbers, so unlike the
+// Phase 8 injection files these are NOT gated on a config flag. This does not perturb the
+// regression contract: it only ADDS one file + one summary key; every PRE-EXISTING file stays
+// byte-identical to a Phase 8 run at the same seed.
 //
 // Phase 8 cold-start additions: when injection is configured (result.coldStart.configured), TWO
 // extra deterministic files are written - new_user_curve.csv and new_reel_exposure.csv - and a
@@ -31,6 +39,11 @@ class ResultsWriter {
     static void writeSummaryJson(const ExperimentResult &result);
     static void writeRetrievalMetricsCsv(const ExperimentResult &result);
     static void writeRecommendationMetricsCsv(const ExperimentResult &result);
+    // Phase 9 (TDD 18.4). Written by writeAll UNCONDITIONALLY (diversity is measurable for any
+    // algorithm); exposed here for targeted tests. Columns: round, mean_unique_topics,
+    // mean_unique_creators, mean_intra_list_similarity, mean_topic_hhi, mean_creator_hhi,
+    // repetition_rate. Deterministic (fixed precision, classic locale).
+    static void writeDiversityMetricsCsv(const ExperimentResult &result);
     static void writeLearningCurveCsv(const ExperimentResult &result);
     static void writeRegretCurveCsv(const ExperimentResult &result);
     static void writeLatencyMetricsCsv(const ExperimentResult &result);

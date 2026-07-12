@@ -12,6 +12,7 @@
 #include "rr/domain/candidate.hpp"
 #include "rr/domain/ids.hpp"
 #include "rr/infrastructure/clock.hpp"
+#include "rr/recommendation/reranker.hpp"
 #include "rr/recommendation/seen_filter.hpp"
 
 namespace rr {
@@ -59,9 +60,10 @@ bool isExplorationLabeled(const Candidate &c) { return c.source == CandidateSour
 Orchestrator::Orchestrator(std::vector<CandidateGenerator *> sources,
                            const std::vector<Reel> &reels, const Ranker *ranker,
                            const ExplorationCandidateSource *explorationSource,
-                           uint32_t guaranteedSlots)
+                           uint32_t guaranteedSlots, const Reranker *reranker)
     : sources_(std::move(sources)), reels_(reels), ranker_(ranker),
-      explorationSource_(explorationSource), guaranteedSlots_(guaranteedSlots) {}
+      explorationSource_(explorationSource), guaranteedSlots_(guaranteedSlots),
+      reranker_(reranker) {}
 
 // Guaranteed-exploration-slot promotion (Phase 8, TDD 12.7 task 3). `ranked` is the full capped
 // pool in best-first order; only the first `feedSize` survive truncation. We ensure that prefix
@@ -273,12 +275,34 @@ RecommendationResponse Orchestrator::recommend(const User &user,
     std::vector<Candidate> ranked = ranker_->rank(user, rankPool, request.requestTime);
     response.rankingLatencyMs = ranking.elapsedMs();
 
-    // --- Reranking stage: guaranteed exploration slots (Phase 8, TDD 12.7 task 3). Reorders the
-    // ranked pool in place so the feed prefix meets the exploration guarantee; inert unless an
-    // exploration source + non-zero guaranteedSlots were supplied and a gate fired. Diversity
-    // reranking lands in Phase 9.
+    // --- Reranking stage. Guaranteed exploration slots (Phase 8, TDD 12.7 task 3) reorder the
+    // ranked pool in place so the feed prefix meets the exploration guarantee (inert unless an
+    // exploration source + non-zero guaranteedSlots were supplied and a gate fired). Then, on this
+    // RANKED path only, diversity re-ranking (Phase 9, TDD 15) runs when a Reranker was supplied
+    // AND request.enableDiversity is set.
     Stopwatch reranking;
     applyExplorationGuarantee(ranked, feedSize);
+
+    if (reranker_ != nullptr && request.enableDiversity) {
+        // The exploration guarantee already reordered `ranked` (best-first, promotions applied), so
+        // the reranker walks THAT order — a constraint selection therefore takes promoted
+        // exploration items unless they violate a hard cap (caps win; delivered exploration slots
+        // may fall below g; deterministic and accepted). The reranker returns the feed already
+        // truncated to feedSize with ranks 0..n-1 and score = each candidate's rankingScore; it
+        // sees only the representative single label per reel, so we OVERWRITE each
+        // RankedReel.sources with the FULL merged label set from labelsById (falling back to the
+        // reranker-provided label if, impossibly, it returned an id we did not send).
+        std::vector<RankedReel> reranked = reranker_->rerank(user, ranked, feedSize);
+        response.rerankingLatencyMs = reranking.elapsedMs();
+        for (RankedReel &r : reranked) {
+            if (auto it = labelsById.find(r.reelId); it != labelsById.end()) {
+                r.sources = it->second;
+            }
+        }
+        response.reels = std::move(reranked);
+        response.totalLatencyMs = total.elapsedMs();
+        return response;
+    }
     response.rerankingLatencyMs = reranking.elapsedMs();
 
     // --- Truncate to the feed size in the ranker's returned order; assign ranks 0..n-1, score =

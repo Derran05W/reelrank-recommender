@@ -1,0 +1,97 @@
+{
+  "algorithm": "hnsw_ranker_diversity",
+  "counts": {
+    "impressions": 1299699,
+    "reels": 100000,
+    "requests": 200000,
+    "rounds": 20,
+    "sessions": 82378,
+    "users": 10000
+  },
+  "diversity": {
+    "feeds": 200000,
+    "mean_creator_hhi": 0.22690569711198796,
+    "mean_intra_list_similarity": 0.5946450081976795,
+    "mean_topic_hhi": 0.5433202661958155,
+    "mean_unique_creators": 6.040355,
+    "mean_unique_topics": 2.845075,
+    "note": "Per-feed diversity (Phase 9, TDD 18.4), measured on EVERY request (unsampled: a feedSize-10 feed is 45 dot products) from the feed AS PRESENTED, before its impressions are stepped, so the seen-set is the pre-feed state. unique_topics/creators = distinct primaryTopic/creatorId counts; intra_list_similarity = mean pairwise embedding cosine (0 for feeds with <2 items); topic_hhi/creator_hhi = Herfindahl-Hirschman index over topic/creator shares (sum of squared shares: 1.0 = one topic, 1/k = uniform over k distinct). repetition_rate = fraction of feed items that were shown to the user earlier this run OR duplicated within the feed - expected 0 by construction (the orchestrator seen-filters and de-duplicates), published as live verification of the 'duplicate/repetitive content eliminated' exit criterion. The per-round curve is in diversity_metrics.csv; all values are deterministic. This is measured for ANY algorithm (diversity.enabled does not change existing feeds), so the numbers are the phase-comparison baseline.",
+    "repetition_rate": 0.0,
+    "repetition_total": 0
+  },
+  "experiment_id": "hnsw_ranker_diversity-seed42-20260712T025121",
+  "learning": {
+    "enabled": true,
+    "final_estimated_hidden_cosine": 0.38258824492513166,
+    "note": "Online preference learning is ENABLED (Phase 7, TDD 8.3/11.2/11.3): every user starts at the cold-start global-average estimate (TDD 11.1) and the OnlineUserStateUpdater updates the long-term/session/estimated preference vectors after each interaction. learning_curve.csv's mean_estimated_hidden_cosine should trend up as estimates converge toward the hidden preference."
+  },
+  "metrics": {
+    "completion_rate": 0.5045014268688366,
+    "follow_rate": 0.02696547431366801,
+    "instant_skip_rate": 0.39424820670016675,
+    "like_rate": 0.11173664056062212,
+    "mean_session_length": 15.777258491344776,
+    "mean_true_affinity": 0.21007612803378478,
+    "mean_watch_ratio": 0.5401851991013931,
+    "mean_watch_seconds": 16.03216556000792,
+    "reward_per_impression": 0.18414062008009174,
+    "reward_per_session": 2.90523416176012,
+    "share_rate": 0.04102026700028237
+  },
+  "notes": {
+    "baseline_flags": "Requests set enableExploration = exploration.enabled (config-driven since Phase 8) and enableDiversity = diversity.enabled (config-driven since Phase 9). No existing recommender reads either flag, so both are inert for every non-exploration / non-diversity algorithm - the sibling orchestrator's gates are their only readers. candidateLimit = recommendation.vectorCandidates; requestTime = simulator logical clock; sessionId = the most recent interaction's session (SessionId{0} before any interaction).",
+    "learning": "Online preference learning is ENABLED (Phase 7, TDD 8.3/11.2/11.3): every user starts at the cold-start global-average estimate (TDD 11.1) and the OnlineUserStateUpdater updates the long-term/session/estimated preference vectors after each interaction. learning_curve.csv's mean_estimated_hidden_cosine should trend up as estimates converge toward the hidden preference."
+  },
+  "oracle": {
+    "cumulative_regret": 2187.632965678663,
+    "mean_regret": 0.55453307114795,
+    "regret_units_note": "Regret is measured in TRUE-AFFINITY units, not reward units: simulating counterfactual oracle interactions would consume behaviour rng draws and perturb determinism (D8), so the oracle compares mean true affinity of its exhaustive top-k against the recommended feed. Affinity is the monotone core of the reward (TDD 10.1/10.5).",
+    "sample_rate": 0.02,
+    "sampled_requests": 3945
+  },
+  "retrieval": {
+    "applicable": true,
+    "mean_distance_error": 0.010457139396883008,
+    "note": "Live retrieval quality (TDD 18.1) on a Bernoulli(retrieval_sample_rate) subset of requests: the recommender's ANN index is compared against an exact ground-truth index over the active reels for the same query, at k=50. Recall@K = |ANN_K intersect Exact_K| / min(K, corpus); Recall@10 uses the first 10 results. Distance error is the mean positionwise |d_ann,i - d_exact,i| over the first 10 results. Values are deterministic (exact searches). For an exact recommender this measures exactly recall 1.0 / distance error 0.0 (a wiring self-check).",
+    "recall_at_10": 0.6745663327632546,
+    "recall_at_50": 0.5974395309064258,
+    "sample_rate": 0.02,
+    "sampled_requests": 4093
+  },
+  "seed": 42,
+  "timing": {
+    "ranking_latency_ms": {
+      "max": 5.932167,
+      "mean": 0.17027110799000184,
+      "p50": 0.171,
+      "p95": 0.207417,
+      "p99": 0.225625,
+      "samples": 200000
+    },
+    "recommend_latency_ms": {
+      "max": 17.439042,
+      "mean": 3.8003473673350294,
+      "p50": 3.3146044999999997,
+      "p95": 8.1782941,
+      "p99": 8.783335510000002,
+      "samples": 200000
+    },
+    "reranking_latency_ms": {
+      "max": 2.181417,
+      "mean": 0.023892280744999512,
+      "p50": 0.024334,
+      "p95": 0.035042,
+      "p99": 0.041,
+      "samples": 200000
+    },
+    "retrieval_latency_ms": {
+      "max": 16.75875,
+      "mean": 3.4901543919949383,
+      "p50": 2.9647295,
+      "p95": 7.820752049999999,
+      "p99": 8.4085,
+      "samples": 200000
+    },
+    "total_wall_seconds": 829.03034475
+  }
+}
