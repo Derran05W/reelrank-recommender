@@ -197,11 +197,11 @@ TEST_P(VectorIndexDifferentialTest, HnswMatchesExactOnIdenticalData) {
     }
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    Combos, VectorIndexDifferentialTest, testing::ValuesIn(kDiffParams),
-    [](const testing::TestParamInfo<DiffParam> &info) {
-        return "n" + std::to_string(info.param.n) + "_d" + std::to_string(info.param.dim);
-    });
+INSTANTIATE_TEST_SUITE_P(Combos, VectorIndexDifferentialTest, testing::ValuesIn(kDiffParams),
+                         [](const testing::TestParamInfo<DiffParam> &info) {
+                             return "n" + std::to_string(info.param.n) + "_d" +
+                                    std::to_string(info.param.dim);
+                         });
 
 // Dedicated Recall@10 floor property test (plan Phase 1 task 3 regression tripwire). Uses the
 // default-constructed HNSWConfig and enough sample queries for a statistically stable estimate.
@@ -278,7 +278,8 @@ TEST(VectorIndexDifferentialFloorTest, RecallAt10ExceedsFloor) {
     hnsw.setEfSearch(128);
     const double recallWide = measureRecall();
     std::cout << "[ RECALL   ] recall@" << k << " (n=" << n << " dim=" << dim
-              << " m=16 efC=200 efS=128) over " << numQueries << " queries = " << recallWide << "\n";
+              << " m=16 efC=200 efS=128) over " << numQueries << " queries = " << recallWide
+              << "\n";
     RecordProperty("recall_at_10_ef128_x1000", static_cast<int>(recallWide * 1000.0));
 
     // A wider beam can only help (never reduce recall), and confirms the default-config shortfall

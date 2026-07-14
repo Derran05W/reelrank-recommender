@@ -63,8 +63,7 @@ void expectIdentical(const GeneratedUsers &a, const GeneratedUsers &b) {
 
         ASSERT_EQ(x.hiddenPreference.size(), y.hiddenPreference.size());
         for (size_t d = 0; d < x.hiddenPreference.size(); ++d) {
-            ASSERT_EQ(x.hiddenPreference[d], y.hiddenPreference[d])
-                << "user " << i << " dim " << d;
+            ASSERT_EQ(x.hiddenPreference[d], y.hiddenPreference[d]) << "user " << i << " dim " << d;
         }
 
         ASSERT_EQ(x.preferenceConcentration, y.preferenceConcentration);

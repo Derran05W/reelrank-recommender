@@ -99,8 +99,8 @@ TEST(UserGeneratorTest, BehaviouralTraitsWithinRange) {
         EXPECT_TRUE(inRange("sessionLen", h.avgSessionLength, kSessionLengthLo, kSessionLengthHi));
         EXPECT_TRUE(inRange("like", h.likePropensity, kLikePropensityLo, kLikePropensityHi));
         EXPECT_TRUE(inRange("share", h.sharePropensity, kSharePropensityLo, kSharePropensityHi));
-        EXPECT_TRUE(inRange("duration", h.durationTolerance, kDurationToleranceLo,
-                            kDurationToleranceHi));
+        EXPECT_TRUE(
+            inRange("duration", h.durationTolerance, kDurationToleranceLo, kDurationToleranceHi));
         EXPECT_TRUE(inRange("stability", h.preferenceStability, kStabilityLo, kStabilityHi));
     }
 }

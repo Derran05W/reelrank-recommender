@@ -57,10 +57,11 @@ struct HNSWVectorIndex::Impl {
     std::size_t dimensions;
 
     Impl(std::size_t dims, const HNSWConfig &config, std::uint64_t seed, bool countDistanceComps)
-        // Translate rr::HNSWConfig field names to vector-db's (m->M, efConstruction->ef_construction,
-        // efSearch->ef_search) and thread the seed through (D8). The metric arg is `counter` (a
-        // counting EuclideanDistance) when enabled, else nullptr => vector-db makes its own
-        // EuclideanDistance. Either way the distance math is EuclideanDistance (D3).
+        // Translate rr::HNSWConfig field names to vector-db's (m->M,
+        // efConstruction->ef_construction, efSearch->ef_search) and thread the seed through (D8).
+        // The metric arg is `counter` (a counting EuclideanDistance) when enabled, else nullptr =>
+        // vector-db makes its own EuclideanDistance. Either way the distance math is
+        // EuclideanDistance (D3).
         : counter(countDistanceComps ? std::make_shared<CountingEuclidean>() : nullptr),
           index(dims,
                 ::HNSWConfig{static_cast<std::size_t>(config.m),
@@ -77,9 +78,9 @@ HNSWVectorIndex::HNSWVectorIndex(std::size_t dimensions, const HNSWConfig &confi
 HNSWVectorIndex::~HNSWVectorIndex() = default;
 
 void HNSWVectorIndex::insert(const ReelId &id, const Embedding &embedding) {
-    // D2: validate dimension and finiteness ourselves BEFORE touching vector-db, so a vector-db-side
-    // throw never occurs for these two cases in normal operation. Duplicate-key detection is
-    // deliberately left to vector-db (adapters catch nothing on the hot path).
+    // D2: validate dimension and finiteness ourselves BEFORE touching vector-db, so a
+    // vector-db-side throw never occurs for these two cases in normal operation. Duplicate-key
+    // detection is deliberately left to vector-db (adapters catch nothing on the hot path).
     if (embedding.size() != impl_->dimensions) {
         throw std::invalid_argument("HNSWVectorIndex::insert: embedding dimension " +
                                     std::to_string(embedding.size()) + " != index dimension " +
@@ -95,7 +96,8 @@ void HNSWVectorIndex::insert(const ReelId &id, const Embedding &embedding) {
 
     // D4: ReelId -> decimal string key. Only the adapter touches string keys.
     ::Vector vec(embedding);
-    impl_->index.insert(vec, std::to_string(id.value)); // dup-key throw (if any) propagates untouched
+    impl_->index.insert(vec,
+                        std::to_string(id.value)); // dup-key throw (if any) propagates untouched
 }
 
 std::vector<VectorSearchResult> HNSWVectorIndex::search(const Embedding &query, size_t k) const {
@@ -112,13 +114,9 @@ std::vector<VectorSearchResult> HNSWVectorIndex::search(const Embedding &query, 
     return results;
 }
 
-size_t HNSWVectorIndex::size() const {
-    return impl_->index.size();
-}
+size_t HNSWVectorIndex::size() const { return impl_->index.size(); }
 
-void HNSWVectorIndex::setEfSearch(size_t ef) {
-    impl_->index.setEfSearch(ef);
-}
+void HNSWVectorIndex::setEfSearch(size_t ef) { impl_->index.setEfSearch(ef); }
 
 std::vector<size_t> HNSWVectorIndex::getLevelDistribution() const {
     return impl_->index.getLevelDistribution();

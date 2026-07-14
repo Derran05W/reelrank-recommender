@@ -48,7 +48,7 @@ Build (worktree):
 ```
 cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DCMAKE_CXX_FLAGS=-fsanitize=thread -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread \
-  -DREELRANK_VDB_DIR=/Users/derranw/vector-db
+  -DREELRANK_VDB_DIR=/abs/path/to/vector-db
 cmake --build build-tsan --target concurrency_check benchmark_recommender
 ```
 

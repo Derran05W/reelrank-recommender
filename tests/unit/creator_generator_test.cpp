@@ -65,7 +65,7 @@ TEST(CreatorGeneratorTest, SpecialtiesInRangeDistinctAndValid) {
         ASSERT_LE(cr.topicSpecialties.size(), 3u);
         std::vector<uint32_t> seen;
         for (rr::TopicId t : cr.topicSpecialties) {
-            EXPECT_LT(t.value, c.topics); // valid topic id
+            EXPECT_LT(t.value, c.topics);                                // valid topic id
             EXPECT_EQ(std::count(seen.begin(), seen.end(), t.value), 0); // distinct
             seen.push_back(t.value);
         }

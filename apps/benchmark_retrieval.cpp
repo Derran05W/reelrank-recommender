@@ -108,12 +108,14 @@ namespace {
 // ---------------------------------------------------------------------------------------------
 
 double percentile(std::vector<double> values, double p) {
-    if (values.empty()) return 0.0;
+    if (values.empty())
+        return 0.0;
     std::sort(values.begin(), values.end());
     const double rank = (p / 100.0) * static_cast<double>(values.size() - 1);
     const size_t lo = static_cast<size_t>(std::floor(rank));
     const size_t hi = static_cast<size_t>(std::ceil(rank));
-    if (lo == hi) return values[lo];
+    if (lo == hi)
+        return values[lo];
     const double frac = rank - static_cast<double>(lo);
     return values[lo] * (1.0 - frac) + values[hi] * frac;
 }
@@ -124,8 +126,8 @@ size_t currentRssBytes() {
 #if defined(__APPLE__)
     mach_task_basic_info info{};
     mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
-    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
-                  reinterpret_cast<task_info_t>(&info), &count) == KERN_SUCCESS) {
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, reinterpret_cast<task_info_t>(&info),
+                  &count) == KERN_SUCCESS) {
         return static_cast<size_t>(info.resident_size);
     }
     return 0;
@@ -133,11 +135,13 @@ size_t currentRssBytes() {
     long rss_pages = 0;
     if (FILE *f = std::fopen("/proc/self/statm", "r")) {
         long size_pages = 0;
-        if (std::fscanf(f, "%ld %ld", &size_pages, &rss_pages) != 2) rss_pages = 0;
+        if (std::fscanf(f, "%ld %ld", &size_pages, &rss_pages) != 2)
+            rss_pages = 0;
         std::fclose(f);
     }
-    return rss_pages > 0 ? static_cast<size_t>(rss_pages) * static_cast<size_t>(sysconf(_SC_PAGESIZE))
-                         : 0;
+    return rss_pages > 0
+               ? static_cast<size_t>(rss_pages) * static_cast<size_t>(sysconf(_SC_PAGESIZE))
+               : 0;
 #else
     return 0;
 #endif
@@ -153,7 +157,8 @@ std::string runCommand(const std::string &cmd) {
     std::string out;
     if (FILE *pipe = ::popen(cmd.c_str(), "r")) {
         char buf[512];
-        while (std::fgets(buf, sizeof(buf), pipe) != nullptr) out += buf;
+        while (std::fgets(buf, sizeof(buf), pipe) != nullptr)
+            out += buf;
         ::pclose(pipe);
     }
     while (!out.empty() && (out.back() == '\n' || out.back() == '\r' || out.back() == ' ')) {
@@ -167,12 +172,24 @@ std::string jsonEscape(const std::string &s) {
     r.reserve(s.size() + 8);
     for (char c : s) {
         switch (c) {
-        case '"': r += "\\\""; break;
-        case '\\': r += "\\\\"; break;
-        case '\n': r += "\\n"; break;
-        case '\r': r += "\\r"; break;
-        case '\t': r += "\\t"; break;
-        default: r += c; break;
+        case '"':
+            r += "\\\"";
+            break;
+        case '\\':
+            r += "\\\\";
+            break;
+        case '\n':
+            r += "\\n";
+            break;
+        case '\r':
+            r += "\\r";
+            break;
+        case '\t':
+            r += "\\t";
+            break;
+        default:
+            r += c;
+            break;
         }
     }
     return r;
@@ -209,16 +226,20 @@ std::string nowIso() {
 #if defined(__APPLE__)
 std::string sysctlString(const char *name) {
     size_t len = 0;
-    if (sysctlbyname(name, nullptr, &len, nullptr, 0) != 0 || len == 0) return "";
+    if (sysctlbyname(name, nullptr, &len, nullptr, 0) != 0 || len == 0)
+        return "";
     std::string buf(len, '\0');
-    if (sysctlbyname(name, buf.data(), &len, nullptr, 0) != 0) return "";
-    if (!buf.empty() && buf.back() == '\0') buf.pop_back();
+    if (sysctlbyname(name, buf.data(), &len, nullptr, 0) != 0)
+        return "";
+    if (!buf.empty() && buf.back() == '\0')
+        buf.pop_back();
     return buf;
 }
 uint64_t sysctlU64(const char *name) {
     uint64_t v = 0;
     size_t len = sizeof(v);
-    if (sysctlbyname(name, &v, &len, nullptr, 0) != 0) return 0;
+    if (sysctlbyname(name, &v, &len, nullptr, 0) != 0)
+        return 0;
     return v;
 }
 #endif
@@ -230,7 +251,8 @@ std::vector<rr::Embedding> generateEmbeddings(rr::Rng &rng, size_t count, size_t
     data.reserve(count);
     for (size_t i = 0; i < count; ++i) {
         rr::Embedding e(dim);
-        for (size_t d = 0; d < dim; ++d) e[d] = static_cast<float>(rng.gaussian());
+        for (size_t d = 0; d < dim; ++d)
+            e[d] = static_cast<float>(rng.gaussian());
         rr::normalize(e);
         data.push_back(std::move(e));
     }
@@ -247,7 +269,8 @@ template <class T> std::vector<T> parseList(const std::string &s, const char *fl
         // trim surrounding whitespace
         size_t b = tok.find_first_not_of(" \t");
         size_t e = tok.find_last_not_of(" \t");
-        if (b == std::string::npos) continue;
+        if (b == std::string::npos)
+            continue;
         tok = tok.substr(b, e - b + 1);
         try {
             out.push_back(static_cast<T>(std::stoull(tok)));
@@ -272,10 +295,10 @@ struct DatasetBundle {
 
 // Isotropic-random data on the Phase-1 stream names (byte-identical at dim==64).
 DatasetBundle makeRandomBundle(uint64_t seed, size_t vc, size_t dim, size_t numQueries) {
-    rr::Rng dataRng = rr::forkRng(seed, "dataset-vc" + std::to_string(vc) + "-d" +
-                                            std::to_string(dim));
-    rr::Rng queryRng = rr::forkRng(seed, "queries-vc" + std::to_string(vc) + "-d" +
-                                             std::to_string(dim));
+    rr::Rng dataRng =
+        rr::forkRng(seed, "dataset-vc" + std::to_string(vc) + "-d" + std::to_string(dim));
+    rr::Rng queryRng =
+        rr::forkRng(seed, "queries-vc" + std::to_string(vc) + "-d" + std::to_string(dim));
     DatasetBundle b;
     b.data = generateEmbeddings(dataRng, vc, dim);
     b.queries = generateEmbeddings(queryRng, numQueries, dim);
@@ -303,14 +326,16 @@ DatasetBundle makeClusteredBundle(uint64_t seed, size_t vc, size_t dim, size_t n
 
     DatasetBundle b;
     b.data.reserve(vc);
-    for (size_t i = 0; i < vc; ++i) b.data.push_back(ds.reels[i].embedding);
+    for (size_t i = 0; i < vc; ++i)
+        b.data.push_back(ds.reels[i].embedding);
 
     b.queries.reserve(numQueries);
     if (usersQuerySource) {
         for (size_t i = 0; i < numQueries; ++i)
             b.queries.push_back(ds.hiddenStates[i].hiddenPreference);
     } else {
-        for (size_t i = 0; i < numQueries; ++i) b.queries.push_back(ds.reels[vc + i].embedding);
+        for (size_t i = 0; i < numQueries; ++i)
+            b.queries.push_back(ds.reels[vc + i].embedding);
     }
     return b;
 }
@@ -339,9 +364,9 @@ struct Row {
     size_t maxGraphLevel;
     size_t numLevels;
     // Phase 11 appended columns:
-    std::string dataDistribution;   // "random" | "clustered"
-    double distanceCompsPerQuery;   // mean distance() calls per query; -1.0 when not measured
-    double peakRssMb;               // process lifetime peak RSS after this build (rr::peakRssBytes)
+    std::string dataDistribution; // "random" | "clustered"
+    double distanceCompsPerQuery; // mean distance() calls per query; -1.0 when not measured
+    double peakRssMb;             // process lifetime peak RSS after this build (rr::peakRssBytes)
 };
 
 struct GraphLevelRow {
@@ -432,13 +457,13 @@ int main(int argc, char **argv) {
     // ---- grid -----------------------------------------------------------------------------
     // Defaults reproduce the byte-compatible Phase 1 subset (dims {64}, efc {200}); --smoke shrinks
     // the corpus and query count only. User-supplied lists override the corresponding default.
-    if (smoke) numQueries = 30;
+    if (smoke)
+        numQueries = 30;
     const std::vector<size_t> dims = dimsArg.empty() ? std::vector<size_t>{64} : dimsArg;
     const std::vector<uint32_t> efcs = efcsArg.empty() ? std::vector<uint32_t>{200} : efcsArg;
-    const std::vector<size_t> vectorCounts =
-        !vectorCountsArg.empty() ? vectorCountsArg
-        : smoke                  ? std::vector<size_t>{1000}
-                                 : std::vector<size_t>{10000, 100000};
+    const std::vector<size_t> vectorCounts = !vectorCountsArg.empty() ? vectorCountsArg
+                                             : smoke                  ? std::vector<size_t>{1000}
+                                                     : std::vector<size_t>{10000, 100000};
     const std::vector<uint32_t> ms = msArg.empty() ? std::vector<uint32_t>{8, 16, 32} : msArg;
     const std::vector<size_t> efSearches = {16, 32, 64, 128, 256};
     const std::vector<size_t> ks = {10, 50, 200, 500};
@@ -453,8 +478,8 @@ int main(int argc, char **argv) {
               << "  out=" << outDir.string() << "\n"
               << "  dims=" << dims.size() << " efcs=" << efcs.size()
               << " vector_counts=" << vectorCounts.size() << " data=" << dataDistribution
-              << " count_distances=" << (countDistances ? "on" : "off")
-              << " queries=" << numQueries << (smoke ? "  [SMOKE]\n" : "\n");
+              << " count_distances=" << (countDistances ? "on" : "off") << " queries=" << numQueries
+              << (smoke ? "  [SMOKE]\n" : "\n");
 
     rr::Stopwatch wallClock; // total sweep wall time.
 
@@ -467,10 +492,9 @@ int main(int argc, char **argv) {
         for (size_t vc : vectorCounts) {
             std::cerr << "[d=" << dim << " vc=" << vc << "] generating " << dataDistribution
                       << " dataset + queries ..." << std::endl;
-            const DatasetBundle bundle =
-                clustered ? makeClusteredBundle(seed, vc, dim, numQueries,
-                                                clusteredUsersQuerySource)
-                          : makeRandomBundle(seed, vc, dim, numQueries);
+            const DatasetBundle bundle = clustered ? makeClusteredBundle(seed, vc, dim, numQueries,
+                                                                         clusteredUsersQuerySource)
+                                                   : makeRandomBundle(seed, vc, dim, numQueries);
             const std::vector<rr::Embedding> &data = bundle.data;
             const std::vector<rr::Embedding> &queries = bundle.queries;
 
@@ -485,7 +509,8 @@ int main(int argc, char **argv) {
             for (size_t q = 0; q < queries.size(); ++q) {
                 const auto res = exact.search(queries[q], maxK);
                 exactTop[q].reserve(res.size());
-                for (const auto &r : res) exactTop[q].push_back(r.reelId.value);
+                for (const auto &r : res)
+                    exactTop[q].push_back(r.reelId.value);
             }
 
             for (uint32_t efc : efcs) {
@@ -507,8 +532,8 @@ int main(int argc, char **argv) {
 
                     std::cerr << "[d=" << dim << " vc=" << vc << " efc=" << efc << " M=" << m
                               << "] building HNSW graph ..." << std::endl;
-                    auto hnsw = std::make_unique<rr::HNSWVectorIndex>(dim, cfg, hnswSeed,
-                                                                      countDistances);
+                    auto hnsw =
+                        std::make_unique<rr::HNSWVectorIndex>(dim, cfg, hnswSeed, countDistances);
 
                     const size_t rssBefore = currentRssBytes();
                     rr::Stopwatch buildTimer;
@@ -583,7 +608,8 @@ int main(int argc, char **argv) {
                                     exactTop[q].begin() + static_cast<std::ptrdiff_t>(kk));
                                 size_t overlap = 0;
                                 for (const auto &r : approx) {
-                                    if (exactSet.count(r.reelId.value)) ++overlap;
+                                    if (exactSet.count(r.reelId.value))
+                                        ++overlap;
                                 }
                                 recallSum +=
                                     (k > 0) ? (static_cast<double>(overlap) /
@@ -605,7 +631,8 @@ int main(int argc, char **argv) {
                             row.p95Ms = percentile(latencies, 95.0);
                             row.p99Ms = percentile(latencies, 99.0);
                             double sum = 0.0;
-                            for (double l : latencies) sum += l;
+                            for (double l : latencies)
+                                sum += l;
                             row.meanMs = sum / static_cast<double>(latencies.size());
                             row.numQueries = queries.size();
                             row.buildTimeMs = buildTimeMs;
@@ -618,10 +645,9 @@ int main(int argc, char **argv) {
                             // -1 flags "not measured" AND "latency is clean" (see file header).
                             const uint64_t distComps = hnsw->distanceComputations();
                             row.distanceCompsPerQuery =
-                                countDistances
-                                    ? static_cast<double>(distComps) /
-                                          static_cast<double>(queries.size())
-                                    : -1.0;
+                                countDistances ? static_cast<double>(distComps) /
+                                                     static_cast<double>(queries.size())
+                                               : -1.0;
                             row.peakRssMb = peakRssMb;
                             rows.push_back(row);
                         }
@@ -675,13 +701,15 @@ int main(int argc, char **argv) {
                 << (static_cast<double>(g.memoryDeltaBytes) / (1024.0 * 1024.0)) << ',';
             // level distribution as a semicolon-joined list "l0;l1;l2;..."
             for (size_t i = 0; i < g.levelDistribution.size(); ++i) {
-                if (i) csv << ';';
+                if (i)
+                    csv << ';';
                 csv << g.levelDistribution[i];
             }
             csv << ',' << g.dimensions << ',';
             // level-0 degree histogram as a semicolon-joined list "d0;d1;d2;..."
             for (size_t i = 0; i < g.degreeHistogramLevel0.size(); ++i) {
-                if (i) csv << ';';
+                if (i)
+                    csv << ';';
                 csv << g.degreeHistogramLevel0[i];
             }
             csv << ',' << std::setprecision(2) << g.peakRssMb << '\n';
@@ -695,7 +723,8 @@ int main(int argc, char **argv) {
             std::ostringstream o;
             o << '[';
             for (size_t i = 0; i < v.size(); ++i) {
-                if (i) o << ',';
+                if (i)
+                    o << ',';
                 o << v[i];
             }
             o << ']';
@@ -744,7 +773,8 @@ int main(int argc, char **argv) {
             double p50min = 1e9, p50max = -1e9;
             double thrMin = 1e18, thrMax = -1e18;
             for (const auto &r : rows) {
-                if (r.vectorCount != vc) continue;
+                if (r.vectorCount != vc)
+                    continue;
                 if (r.k == 10u) {
                     r10min = std::min(r10min, r.recallAtK);
                     r10max = std::max(r10max, r.recallAtK);
@@ -773,8 +803,10 @@ int main(int argc, char **argv) {
             for (const auto &r : rows) {
                 if (r.dimensions == g.dimensions && r.vectorCount == g.vectorCount &&
                     r.efConstruction == g.efConstruction && r.m == g.m && r.k == 10u) {
-                    if (r.efSearch == 16u) r10ef16 = r.recallAtK;
-                    if (r.efSearch == 256u) r10ef256 = r.recallAtK;
+                    if (r.efSearch == 16u)
+                        r10ef16 = r.recallAtK;
+                    if (r.efSearch == 256u)
+                        r10ef256 = r.recallAtK;
                 }
             }
             j << "    {\n";
@@ -805,8 +837,7 @@ int main(int argc, char **argv) {
         const std::string rrDirtyRaw =
             runCommand("git -C '" + repoDir + "' status --porcelain 2>/dev/null");
         const bool rrDirty = !rrDirtyRaw.empty();
-        const std::string vdbSha =
-            runCommand("git -C '" + vdbDir + "' rev-parse HEAD 2>/dev/null");
+        const std::string vdbSha = runCommand("git -C '" + vdbDir + "' rev-parse HEAD 2>/dev/null");
 
 #if defined(__APPLE__)
         const std::string cpu = sysctlString("machdep.cpu.brand_string");
@@ -873,7 +904,8 @@ int main(int argc, char **argv) {
         auto jarr = [&](const auto &v) {
             j << '[';
             for (size_t i = 0; i < v.size(); ++i) {
-                if (i) j << ',';
+                if (i)
+                    j << ',';
                 j << v[i];
             }
             j << ']';
