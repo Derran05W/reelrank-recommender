@@ -461,9 +461,10 @@ int main(int argc, char **argv) {
         numQueries = 30;
     const std::vector<size_t> dims = dimsArg.empty() ? std::vector<size_t>{64} : dimsArg;
     const std::vector<uint32_t> efcs = efcsArg.empty() ? std::vector<uint32_t>{200} : efcsArg;
-    const std::vector<size_t> vectorCounts = !vectorCountsArg.empty() ? vectorCountsArg
-                                             : smoke                  ? std::vector<size_t>{1000}
-                                                     : std::vector<size_t>{10000, 100000};
+    const std::vector<size_t> defaultCounts =
+        smoke ? std::vector<size_t>{1000} : std::vector<size_t>{10000, 100000};
+    const std::vector<size_t> vectorCounts =
+        vectorCountsArg.empty() ? defaultCounts : vectorCountsArg;
     const std::vector<uint32_t> ms = msArg.empty() ? std::vector<uint32_t>{8, 16, 32} : msArg;
     const std::vector<size_t> efSearches = {16, 32, 64, 128, 256};
     const std::vector<size_t> ks = {10, 50, 200, 500};

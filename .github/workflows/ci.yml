@@ -48,8 +48,8 @@ jobs:
       - name: Checkout reel-rank
         uses: actions/checkout@v4
 
-      - name: Install clang-format
-        run: sudo apt-get update && sudo apt-get install -y clang-format
+      - name: Install clang-format (pinned — the canonical formatter version for this repo)
+        run: pipx install clang-format==22.1.8
 
       - name: Check formatting
         run: |

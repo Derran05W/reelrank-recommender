@@ -102,12 +102,15 @@ void checkInvariants(const BehaviourOutcome &o, const HiddenUserState &h, const 
     EXPECT_FLOAT_EQ(o.baseAffinity, dot(h.hiddenPreference, r.embedding));
 
     // Engagement requires a completed watch.
-    if (o.liked)
+    if (o.liked) {
         EXPECT_TRUE(o.completed);
-    if (o.shared)
+    }
+    if (o.shared) {
         EXPECT_TRUE(o.completed);
-    if (o.followed)
+    }
+    if (o.followed) {
         EXPECT_TRUE(o.completed);
+    }
 
     // Instant skip and completion are mutually exclusive; skip => tiny watch ratio.
     if (o.instantSkip) {
@@ -123,15 +126,17 @@ void checkInvariants(const BehaviourOutcome &o, const HiddenUserState &h, const 
         EXPECT_LT(o.watchRatio, kHighRatioLo);
     }
     EXPECT_EQ(o.rewatch, o.watchRatio > 1.0f);
-    if (o.rewatch)
+    if (o.rewatch) {
         EXPECT_TRUE(o.completed);
+    }
 
     // watchSeconds is exactly watchRatio * duration.
     EXPECT_FLOAT_EQ(o.watchSeconds, o.watchRatio * r.durationSeconds);
 
     // NotInterested only for very negative z.
-    if (o.notInterested)
+    if (o.notInterested) {
         EXPECT_LT(o.behaviourScore, static_cast<float>(cfg.notInterestedZ));
+    }
 
     // Collapsed primaryType matches the documented priority.
     EXPECT_EQ(o.primaryType, referencePrimary(o));
