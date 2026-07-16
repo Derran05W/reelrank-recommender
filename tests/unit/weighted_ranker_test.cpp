@@ -115,9 +115,9 @@ TEST(WeightedRankerTest, AllElevenKeysAlwaysPresent) {
     ASSERT_EQ(ranked.size(), 1u);
     const auto &m = ranked.front().featureContributions;
     EXPECT_EQ(m.size(), 11u);
-    for (const std::string &key : {"similarity", "session_topic", "quality", "freshness",
-                                   "popularity", "trending", "creator_affinity", "exploration",
-                                   "duration_match", "repetition_penalty", "impression_penalty"}) {
+    for (const std::string key : {"similarity", "session_topic", "quality", "freshness",
+                                  "popularity", "trending", "creator_affinity", "exploration",
+                                  "duration_match", "repetition_penalty", "impression_penalty"}) {
         EXPECT_EQ(m.count(key), 1u) << "missing key " << key;
     }
 }
