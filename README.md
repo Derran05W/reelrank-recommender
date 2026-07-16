@@ -1,5 +1,7 @@
 # ReelRank
 
+[![CI](https://github.com/Derran05W/reelrank-recommender/actions/workflows/ci.yml/badge.svg)](https://github.com/Derran05W/reelrank-recommender/actions/workflows/ci.yml)
+
 ReelRank is a **single-process, fully deterministic C++20 simulation and evaluation harness for
 multi-stage short-video ("reels") recommendation**, built on top of a custom HNSW vector library.
 It generates a synthetic world — topics, creators, reels, and users whose *hidden* preferences are
@@ -163,8 +165,8 @@ ctest --test-dir build-release --output-on-failure
 
 The test suite is a single `reel_rank_tests` binary (unit / integration / property / differential
 suites, distinguished by GoogleTest filters and CTest labels): **533 tests, all green** on
-macOS/AppleClang. Performance benchmarks are separate executables under `apps/` and are never run by
-`ctest` (design decision D7).
+macOS/AppleClang and Ubuntu/GCC (Debug and Release, verified in CI). Performance benchmarks are
+separate executables under `apps/` and are never run by `ctest` (design decision D7).
 
 Point at a non-default vector-db checkout:
 

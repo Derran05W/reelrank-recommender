@@ -73,14 +73,17 @@ over libm `log`/`cos`) can differ by a few ulps across C libraries, so its regre
 1e-12. Determinism holds bit-for-bit on a fixed toolchain; strict cross-libm bit-identity of
 gaussian draws is not guaranteed.
 
-**CI is committed but never executed.** The GitHub Actions workflow (macOS + Ubuntu × Debug/Release
-+ format check + simulate `--smoke`) has been in the tree since Phase 0 but has **never run** —
-the repo has no GitHub remote. The style drift that pre-Phase-5-era files carried (a known
-six-file issue, resolved by reformatting in Phase 12) means the tree is now clean under Apple
-clang-format 21.0.0 — the locally installed tool — but the CI workflow installs an *unpinned*
-clang-format whose decisions may differ. "Builds green, 533/533 tests pass, format clean" is
-verified *locally* on this machine, not by CI. Future work: push to a remote so CI actually runs,
-and pin the formatter version to one whose behaviour matches the local toolchain.
+**CI first ran at publication, not during development.** The GitHub Actions workflow (macOS +
+Ubuntu × Debug/Release + format check + simulate `--smoke`) was in the tree from Phase 0 but had
+no remote to run on until the repo was published (2026-07-15). Its first runs surfaced two
+GCC-only warning classes in test code (`-Wdangling-else` around gtest macros,
+`-Wrange-loop-construct`), fixed on publication day; the canonical formatter is now **pinned**
+(clang-format 22.1.8 via pipx), and the tree is clean under both it and the local Apple
+clang-format 21. CI is green across the full matrix — which also means the 533-test suite,
+including the golden-value RNG and byte-identical-CSV determinism tests, now passes on
+Ubuntu/GCC as well as macOS/AppleClang, upgrading the cross-platform determinism claim from
+by-design to demonstrated. Residual limitation: all *published benchmark numbers* remain
+single-machine (Apple M5); CI validates correctness, not performance.
 
 ---
 
