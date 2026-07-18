@@ -315,3 +315,48 @@ TEST(ConfigTest, MissingFileThrows) {
         EXPECT_NE(std::string(e.what()).find("does_not_exist.json"), std::string::npos);
     }
 }
+
+// --- Realism V2 block (Phase 13, D17/D24) ---------------------------------------------------
+
+TEST(ConfigTest, RealismDefaultsPreserveV1) {
+    ExperimentConfig def;
+    EXPECT_FALSE(def.realism.contentV2);
+    EXPECT_EQ(def.realism.languages, 8u);
+    EXPECT_EQ(def.realism.archetypes, defaultArchetypeCatalog());
+    EXPECT_EQ(def.realism.archetypes.size(), 8u);
+}
+
+TEST(ConfigTest, RealismBlockParsesAndRoundTrips) {
+    json j = {{"realism",
+               {{"content_v2", true},
+                {"languages", 3},
+                {"archetypes", json::array({{{"name", "only"}, {"weight", 2.0}}})}}}};
+    auto c = j.get<ExperimentConfig>();
+    EXPECT_TRUE(c.realism.contentV2);
+    EXPECT_EQ(c.realism.languages, 3u);
+    ASSERT_EQ(c.realism.archetypes.size(), 1u);
+    EXPECT_EQ(c.realism.archetypes[0].name, "only");
+    EXPECT_DOUBLE_EQ(c.realism.archetypes[0].weight, 2.0);
+
+    json out = c;
+    auto back = out.get<ExperimentConfig>();
+    EXPECT_EQ(c, back);
+}
+
+TEST(ConfigTest, UnknownRealismKeyThrows) {
+    json j = {{"realism", {{"content_v3", true}}}};
+    EXPECT_THROW(j.get<ExperimentConfig>(), std::invalid_argument);
+}
+
+TEST(ConfigTest, RealismValidationThrows) {
+    // languages must be >= 1.
+    json zeroLang = {{"realism", {{"languages", 0}}}};
+    EXPECT_THROW(zeroLang.get<ExperimentConfig>(), std::invalid_argument);
+    // The archetype catalog must not be empty.
+    json emptyCatalog = {{"realism", {{"archetypes", json::array()}}}};
+    EXPECT_THROW(emptyCatalog.get<ExperimentConfig>(), std::invalid_argument);
+    // content_v2 + mid-simulation injection is a documented Phase 13 scope guard.
+    json injection = {{"realism", {{"content_v2", true}}},
+                      {"simulation", {{"new_users", 10}, {"new_users_at", 2}}}};
+    EXPECT_THROW(injection.get<ExperimentConfig>(), std::invalid_argument);
+}

@@ -3,7 +3,6 @@
 #include <unordered_map>
 
 #include "rr/domain/creator.hpp"
-#include "rr/domain/hidden_user_state.hpp"
 #include "rr/domain/interaction.hpp"
 #include "rr/domain/reel.hpp"
 #include "rr/domain/user.hpp"
@@ -11,6 +10,7 @@
 #include "rr/infrastructure/config.hpp"
 #include "rr/learning/reward_model.hpp"
 #include "rr/simulation/behaviour_model.hpp"
+#include "rr/simulation/hidden/hidden_user_state.hpp"
 
 namespace rr {
 

@@ -13,9 +13,9 @@
 
 #include "rr/core/embedding.hpp"
 #include "rr/domain/creator.hpp"
-#include "rr/domain/hidden_user_state.hpp"
 #include "rr/domain/ids.hpp"
 #include "rr/infrastructure/config.hpp"
+#include "rr/simulation/hidden/hidden_user_state.hpp"
 
 using namespace rr;
 

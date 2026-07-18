@@ -83,7 +83,6 @@
 #include "rr/candidate_sources/trending_candidate_source.hpp"
 #include "rr/core/embedding.hpp"
 #include "rr/domain/candidate.hpp"
-#include "rr/domain/hidden_user_state.hpp"
 #include "rr/domain/ids.hpp"
 #include "rr/domain/interaction.hpp"
 #include "rr/domain/recommendation.hpp"
@@ -99,6 +98,7 @@
 #include "rr/recommendation/orchestrator.hpp"
 #include "rr/recommendation/weighted_ranker.hpp"
 #include "rr/simulation/dataset_generator.hpp"
+#include "rr/simulation/hidden/hidden_user_state.hpp"
 #include "rr/vindex/hnsw_vector_index.hpp"
 
 #if defined(__APPLE__)

@@ -9,12 +9,12 @@
 
 #include "rr/core/embedding.hpp"
 #include "rr/domain/creator.hpp"
-#include "rr/domain/hidden_user_state.hpp"
 #include "rr/domain/ids.hpp"
 #include "rr/domain/reel.hpp"
 #include "rr/infrastructure/config.hpp"
 #include "rr/infrastructure/random.hpp"
 #include "rr/simulation/dataset_generator.hpp"
+#include "rr/simulation/hidden/hidden_user_state.hpp"
 
 using namespace rr;
 

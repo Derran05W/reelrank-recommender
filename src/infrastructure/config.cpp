@@ -349,6 +349,23 @@ void from_json(const json &j, RecommendationAlgorithm &a) {
     a = algorithmFromString(j.get<std::string>());
 }
 
+void to_json(json &j, const RealismConfig &c) {
+    j = json{{"content_v2", c.contentV2}, {"languages", c.languages}, {"archetypes", c.archetypes}};
+}
+
+void from_json(const json &j, RealismConfig &c) {
+    ensureKnownKeys(j, "realism", {"content_v2", "languages", "archetypes"});
+    readKey(j, "content_v2", c.contentV2);
+    readKey(j, "languages", c.languages);
+    readKey(j, "archetypes", c.archetypes);
+    if (c.languages == 0) {
+        throw std::invalid_argument("realism.languages must be >= 1");
+    }
+    if (c.archetypes.empty()) {
+        throw std::invalid_argument("realism.archetypes must not be empty");
+    }
+}
+
 void to_json(json &j, const ExperimentConfig &c) {
     j = json{{"simulation", c.simulation},
              {"recommendation", c.recommendation},
@@ -361,13 +378,15 @@ void to_json(json &j, const ExperimentConfig &c) {
              {"drift", c.drift},
              {"behaviour", c.behaviour},
              {"reward", c.reward},
-             {"evaluation", c.evaluation}};
+             {"evaluation", c.evaluation},
+             {"realism", c.realism}};
 }
 
 void from_json(const json &j, ExperimentConfig &c) {
     ensureKnownKeys(j, "<top-level>",
                     {"simulation", "recommendation", "algorithm", "hnsw", "ranking", "learning",
-                     "exploration", "diversity", "drift", "behaviour", "reward", "evaluation"});
+                     "exploration", "diversity", "drift", "behaviour", "reward", "evaluation",
+                     "realism"});
     readKey(j, "simulation", c.simulation);
     readKey(j, "recommendation", c.recommendation);
     readKey(j, "algorithm", c.algorithm);
@@ -380,6 +399,15 @@ void from_json(const json &j, ExperimentConfig &c) {
     readKey(j, "behaviour", c.behaviour);
     readKey(j, "reward", c.reward);
     readKey(j, "evaluation", c.evaluation);
+    readKey(j, "realism", c.realism);
+    // Phase 13 scope guard: mid-simulation injection (Phase 8) predates the V2 content model and
+    // would need V2 augmentation of injected entities on the injection streams — unsupported
+    // until a phase needs it. Fail fast at load rather than silently generating injected
+    // entities with default V2 fields.
+    if (c.realism.contentV2 && (c.simulation.newUsers > 0 || c.simulation.newReels > 0)) {
+        throw std::invalid_argument("realism.content_v2 does not support mid-simulation "
+                                    "injection (simulation.new_users/new_reels) yet");
+    }
 }
 
 ExperimentConfig loadExperimentConfig(const std::filesystem::path &path) {

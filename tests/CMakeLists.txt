@@ -22,3 +22,11 @@ target_compile_definitions(reel_rank_tests PRIVATE RR_SOURCE_DIR="${CMAKE_SOURCE
 
 include(GoogleTest)
 gtest_discover_tests(reel_rank_tests)
+
+# D18 hidden-state include-graph guard (Phase 13): recommender-side modules must never reach a
+# simulation/hidden/ header, even transitively. Registered as a plain ctest so it runs locally
+# and in CI's existing ctest step.
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME hidden_isolation_guard
+         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check_hidden_isolation.py
+                 ${CMAKE_SOURCE_DIR})

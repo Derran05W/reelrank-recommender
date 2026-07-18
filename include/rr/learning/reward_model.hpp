@@ -1,7 +1,7 @@
 #pragma once
 
+#include "rr/domain/behaviour_outcome.hpp"
 #include "rr/infrastructure/config.hpp"
-#include "rr/simulation/behaviour_model.hpp"
 
 namespace rr {
 

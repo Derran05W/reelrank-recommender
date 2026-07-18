@@ -4,10 +4,10 @@
 #include <vector>
 
 #include "rr/domain/creator.hpp" // Topic
-#include "rr/domain/hidden_user_state.hpp"
 #include "rr/domain/user.hpp"
 #include "rr/infrastructure/config.hpp" // SimulationConfig
 #include "rr/infrastructure/random.hpp" // Rng
+#include "rr/simulation/hidden/hidden_user_state.hpp"
 
 namespace rr {
 

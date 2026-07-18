@@ -3,8 +3,8 @@
 #include <vector>
 
 #include "rr/core/embedding.hpp"
-#include "rr/domain/hidden_user_state.hpp"
 #include "rr/domain/user.hpp"
+#include "rr/simulation/hidden/hidden_user_state.hpp"
 
 namespace rr {
 

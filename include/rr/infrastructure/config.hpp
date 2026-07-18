@@ -6,6 +6,8 @@
 
 #include <nlohmann/json_fwd.hpp>
 
+#include "rr/infrastructure/archetype_config.hpp"
+
 namespace rr {
 
 // Every struct default-constructs to the TDD 21 suggested values. JSON keys are snake_case
@@ -194,6 +196,25 @@ struct DriftConfig {
     bool operator==(const DriftConfig &) const = default;
 };
 
+// Realism V2 gates and parameters (V2 TDD, D17/D24 — Phase 13 onward). Every V2 mechanism ships
+// behind this block with defaults that preserve V1 semantics EXACTLY: all gates default false,
+// gate-off runs perform zero V2 rng draws and emit byte-identical V1 output (the committed
+// tests/golden/v1-baseline/ anchor). Later phases add their gates here (latent_reactions,
+// session_dynamics, personalized_diversity, ...); gates that require earlier gates throw at
+// config load (fail-fast, D10).
+struct RealismConfig {
+    // Phase 13 gate: V2 multi-factor content and hidden user channels. On => generateDataset
+    // augments reels/users from the new "archetypes"/"reels-v2"/"users-v2" streams (D19).
+    bool contentV2 = false;
+    // Size of the global language set (V2 TDD 4.1); language ids are 0..languages-1 with the
+    // skewed distribution rr::languageWeights. Must be >= 1.
+    uint32_t languages = 8;
+    // Config-driven archetype catalog (V2 TDD 4.4, D24): defaults to the eight TDD archetypes;
+    // configs may replace it wholesale. Must be non-empty.
+    std::vector<ArchetypeSpec> archetypes = defaultArchetypeCatalog();
+    bool operator==(const RealismConfig &) const = default;
+};
+
 // Evaluation-harness parameters (TDD 19 / phase-4 task 5). The oracle exhaustively scores all
 // reels by true hidden affinity, so it runs only on a Bernoulli-sampled subset of requests; the
 // rate is config-driven and recorded in every experiment's output.
@@ -230,6 +251,7 @@ struct ExperimentConfig {
     BehaviourConfig behaviour;
     RewardConfig reward;
     EvaluationConfig evaluation;
+    RealismConfig realism;
     bool operator==(const ExperimentConfig &) const = default;
 };
 
@@ -260,6 +282,8 @@ void to_json(nlohmann::json &j, const RewardConfig &c);
 void from_json(const nlohmann::json &j, RewardConfig &c);
 void to_json(nlohmann::json &j, const EvaluationConfig &c);
 void from_json(const nlohmann::json &j, EvaluationConfig &c);
+void to_json(nlohmann::json &j, const RealismConfig &c);
+void from_json(const nlohmann::json &j, RealismConfig &c);
 void to_json(nlohmann::json &j, const RecommendationAlgorithm &a);
 void from_json(const nlohmann::json &j, RecommendationAlgorithm &a);
 void to_json(nlohmann::json &j, const ExperimentConfig &c);

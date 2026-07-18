@@ -6,12 +6,12 @@
 #include <vector>
 
 #include "rr/core/embedding.hpp"
-#include "rr/domain/hidden_user_state.hpp"
 #include "rr/evaluation/cold_start.hpp"
 #include "rr/infrastructure/config.hpp"
 #include "rr/infrastructure/random.hpp"
 #include "rr/recommendation/effective_preference.hpp"
 #include "rr/simulation/dataset_generator.hpp"
+#include "rr/simulation/hidden/hidden_user_state.hpp"
 #include "rr/simulation/simulator.hpp"
 
 // Seed-swept property tests for rr::OnlineUserStateUpdater (house style mirrors

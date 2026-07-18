@@ -20,12 +20,16 @@ struct UserTag {};
 struct CreatorTag {};
 struct TopicTag {};
 struct SessionTag {};
+struct LanguageTag {};
 
 using ReelId = Id<ReelTag>;
 using UserId = Id<UserTag>;
 using CreatorId = Id<CreatorTag>;
 using TopicId = Id<TopicTag>;
 using SessionId = Id<SessionTag>;
+// Realism V2 (TDD V2 4.1): reels carry a language drawn from a small config-driven set
+// (realism.languages ids, 0-based) with a skewed global distribution (rr::languageWeights).
+using LanguageId = Id<LanguageTag>;
 
 } // namespace rr
 

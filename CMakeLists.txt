@@ -43,6 +43,8 @@ target_compile_options(rr_warnings INTERFACE -Wall -Wextra -Wpedantic -Werror)
 # --- rr_core: infrastructure + core (never links or includes vector-db, per D2) -------------
 add_library(rr_core STATIC
     src/core/embedding.cpp
+    src/domain/serialization.cpp
+    src/infrastructure/archetype_config.cpp
     src/infrastructure/random.cpp
     src/infrastructure/logger.cpp
     src/infrastructure/config.cpp

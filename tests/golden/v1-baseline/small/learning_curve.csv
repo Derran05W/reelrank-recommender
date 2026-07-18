@@ -1,0 +1,6 @@
+round,interactions_per_user,mean_reward_per_impression,mean_estimated_hidden_cosine
+0,10,0.058260,0.257162
+1,20,0.107497,0.279551
+2,30,0.133345,0.285050
+3,40,0.127227,0.291695
+4,50,0.134473,0.298713

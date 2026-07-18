@@ -15,13 +15,13 @@
 
 #include "rr/core/embedding.hpp"
 #include "rr/domain/creator.hpp"
-#include "rr/domain/hidden_user_state.hpp"
 #include "rr/domain/user.hpp"
 #include "rr/evaluation/cold_start.hpp"
 #include "rr/infrastructure/config.hpp"
 #include "rr/infrastructure/random.hpp"
 #include "rr/simulation/dataset_generator.hpp"
 #include "rr/simulation/drift_scheduler.hpp"
+#include "rr/simulation/hidden/hidden_user_state.hpp"
 #include "rr/simulation/simulator.hpp"
 
 using namespace rr;

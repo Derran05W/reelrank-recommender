@@ -73,7 +73,7 @@ ExperimentResult ExperimentRunner::run() {
     // 1. Dataset + cold-start prior (TDD 11.1): every user's three preference vectors start at the
     //    global-average hidden preference. From here they either stay frozen (learning disabled) or
     //    update online after every interaction (Phase 7).
-    GeneratedDataset ds = generateDataset(config_.simulation, seed);
+    GeneratedDataset ds = generateDataset(config_.simulation, config_.realism, seed);
     // Cold-start prior FROZEN at run start (TDD 11.1): the global-average hidden preference
     // computed ONCE here, before the round loop. Mid-simulation injected users (Phase 8) are
     // initialized to this SAME prior, so injection TIMING never silently changes the prior a cold

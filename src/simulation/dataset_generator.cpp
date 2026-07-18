@@ -4,13 +4,20 @@
 
 #include "rr/infrastructure/random.hpp"
 #include "rr/simulation/creator_generator.hpp"
+#include "rr/simulation/reel_augmenter_v2.hpp"
 #include "rr/simulation/reel_generator.hpp"
 #include "rr/simulation/topic_generator.hpp"
+#include "rr/simulation/user_augmenter_v2.hpp"
 #include "rr/simulation/user_generator.hpp"
 
 namespace rr {
 
 GeneratedDataset generateDataset(const SimulationConfig &config, uint64_t seed) {
+    return generateDataset(config, RealismConfig{}, seed);
+}
+
+GeneratedDataset generateDataset(const SimulationConfig &config, const RealismConfig &realism,
+                                 uint64_t seed) {
     GeneratedDataset dataset;
 
     Rng topicsRng = forkRng(seed, "topics");
@@ -26,6 +33,21 @@ GeneratedDataset generateDataset(const SimulationConfig &config, uint64_t seed) 
     GeneratedUsers generatedUsers = generateUsers(config, dataset.topics, usersRng);
     dataset.users = std::move(generatedUsers.users);
     dataset.hiddenStates = std::move(generatedUsers.hiddenStates);
+
+    // Realism V2 augmentation (Phase 13, D17/D19): runs strictly AFTER the V1 generators so the
+    // V1 fields above are produced by the untouched V1 path, and only under the gate — gate-off
+    // forks none of the V2 streams and performs zero V2 draws. Pinned order: modality spaces
+    // (first draws on "reels-v2"), then reel augmentation ("archetypes" + "reels-v2"), then user
+    // augmentation ("users-v2", consuming the modality spaces as data).
+    if (realism.contentV2) {
+        Rng archetypesRng = forkRng(seed, "archetypes");
+        Rng reelsV2Rng = forkRng(seed, "reels-v2");
+        Rng usersV2Rng = forkRng(seed, "users-v2");
+        dataset.modalitySpaces = generateModalitySpaces(config, realism, reelsV2Rng);
+        augmentReelsV2(dataset.reels, dataset.hiddenReelStates, dataset.modalitySpaces, config,
+                       realism, archetypesRng, reelsV2Rng);
+        augmentUsersV2(dataset.hiddenStates, dataset.modalitySpaces, config, realism, usersV2Rng);
+    }
 
     return dataset;
 }

@@ -1,11 +1,11 @@
 #include "rr/domain/candidate.hpp"
 #include "rr/domain/creator.hpp"
-#include "rr/domain/hidden_user_state.hpp"
 #include "rr/domain/ids.hpp"
 #include "rr/domain/interaction.hpp"
 #include "rr/domain/recommendation.hpp"
 #include "rr/domain/reel.hpp"
 #include "rr/domain/user.hpp"
+#include "rr/simulation/hidden/hidden_user_state.hpp"
 
 // Interface headers: included to prove each is self-contained and overridable.
 #include "rr/learning/user_state_updater.hpp"
