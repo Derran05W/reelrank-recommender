@@ -72,6 +72,17 @@ class ResultsWriter {
     //   archetype_name, impressions, exposure_share, mean_immediate_satisfaction, mean_regret.
     static void writeWelfareMetricsCsv(const ExperimentResult &result);
     static void writeWelfareArchetypeMetricsCsv(const ExperimentResult &result);
+    // Phase 16 (V2 TDD §4.9/§6, D22). Written by writeAll ONLY when result.sessionHealth.configured
+    // (gate-on under realism.session_dynamics); exposed here for targeted tests. Deterministic.
+    //   session_health.csv: per round — round, sessions, open_sessions, mean_duration_seconds,
+    //   median_duration_seconds, mean_impressions, satisfaction_per_minute, regret_per_minute,
+    //   mean_session_utility, early_failure_exit_rate, natural_completion_rate,
+    //   harmful_fatigue_mean, next_session_starting_satisfaction, then the exit-type counts
+    //   failure_exits/satisfied_exits/ fatigue_exits/external_exits/regret_exits. All means/rates
+    //   are over CLOSED sessions; RunEnded (open) sessions appear only in open_sessions. Under the
+    //   P16 scaffold stub the loop closes zero sessions, so every row is a well-formed zero row
+    //   (the populated path lands with package A's exit model).
+    static void writeSessionHealthMetricsCsv(const ExperimentResult &result);
 };
 
 } // namespace rr

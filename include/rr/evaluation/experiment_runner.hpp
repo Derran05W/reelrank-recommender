@@ -8,6 +8,7 @@
 
 #include "rr/evaluation/metrics_collector.hpp"
 #include "rr/evaluation/run_metadata.hpp"
+#include "rr/evaluation/session_health_metrics.hpp"
 #include "rr/evaluation/welfare_metrics.hpp"
 #include "rr/infrastructure/config.hpp"
 
@@ -284,6 +285,17 @@ struct ExperimentResult {
     // breakdown; the engagement group's V2 additions (comment/save/profile rates) live in
     // `overall`/`rounds`.
     WelfareReport welfare;
+
+    // Session-health metric group (Phase 16, V2 TDD §4.9/§6, D22). `configured` is false unless
+    // realism.session_dynamics is on, in which case no session_health block/CSV is written and the
+    // run is byte-identical to a pre-Phase-16 run (D17). Under the gate it carries the per-round +
+    // overall session statistics reduced from the exit-aware loop's collected SessionRecords: exit
+    // counts/shares, time-before-exit (mean/median), satisfaction-/regret-per-minute, mean session
+    // utility U_s, early-failure-exit and natural-completion rates, next-session starting
+    // satisfaction, and the harmful-fatigue mean (which also realizes the welfare group's
+    // previously-placeholder harmful_fatigue column). The P16 statistical tests and package C's
+    // comparison read this in-process.
+    SessionHealthReport sessionHealth;
 };
 
 // Runs the end-to-end evaluation loop (TDD 20 + phase-4 task 4, phase-7 tasks 1/4) from a

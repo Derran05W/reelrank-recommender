@@ -397,14 +397,18 @@ void from_json(const json &j, RecommendationAlgorithm &a) {
 void to_json(json &j, const RealismConfig &c) {
     j = json{{"content_v2", c.contentV2},
              {"latent_reactions", c.latentReactions},
+             {"session_dynamics", c.sessionDynamics},
              {"languages", c.languages},
              {"archetypes", c.archetypes}};
 }
 
 void from_json(const json &j, RealismConfig &c) {
-    ensureKnownKeys(j, "realism", {"content_v2", "latent_reactions", "languages", "archetypes"});
+    ensureKnownKeys(
+        j, "realism",
+        {"content_v2", "latent_reactions", "session_dynamics", "languages", "archetypes"});
     readKey(j, "content_v2", c.contentV2);
     readKey(j, "latent_reactions", c.latentReactions);
+    readKey(j, "session_dynamics", c.sessionDynamics);
     readKey(j, "languages", c.languages);
     readKey(j, "archetypes", c.archetypes);
     if (c.languages == 0) {
@@ -413,9 +417,13 @@ void from_json(const json &j, RealismConfig &c) {
     if (c.archetypes.empty()) {
         throw std::invalid_argument("realism.archetypes must not be empty");
     }
-    // D17 gate dependency: latent reactions consume the V2 content/user factor model.
+    // D17 gate dependencies: latent reactions consume the V2 content/user factor model;
+    // session dynamics consume the latent stream (fatigueDelta, satisfaction, regret).
     if (c.latentReactions && !c.contentV2) {
         throw std::invalid_argument("realism.latent_reactions requires realism.content_v2");
+    }
+    if (c.sessionDynamics && !c.latentReactions) {
+        throw std::invalid_argument("realism.session_dynamics requires realism.latent_reactions");
     }
 }
 
@@ -471,6 +479,53 @@ void from_json(const json &j, BehaviourV2Config &c) {
     readKey(j, "short_duration_seconds", c.shortDurationSeconds);
 }
 
+void to_json(json &j, const SessionDynamicsConfig &c) {
+    j = json{{"topic_fatigue_weight", c.topicFatigueWeight},
+             {"creator_fatigue_weight", c.creatorFatigueWeight},
+             {"novelty_match_weight", c.noveltyMatchWeight},
+             {"topic_fatigue_increment", c.topicFatigueIncrement},
+             {"creator_fatigue_increment", c.creatorFatigueIncrement},
+             {"general_fatigue_scale", c.generalFatigueScale},
+             {"away_decay_half_life_seconds", c.awayDecayHalfLifeSeconds},
+             {"exit_bias", c.exitBias},
+             {"exit_fatigue_weight", c.exitFatigueWeight},
+             {"exit_regret_weight", c.exitRegretWeight},
+             {"exit_poor_streak_weight", c.exitPoorStreakWeight},
+             {"exit_satisfaction_weight", c.exitSatisfactionWeight},
+             {"exit_interruption_weight", c.exitInterruptionWeight},
+             {"external_interruption_hazard", c.externalInterruptionHazard},
+             {"regret_lambda", c.regretLambda},
+             {"fatigue_lambda", c.fatigueLambda},
+             {"failure_exit_lambda", c.failureExitLambda}};
+}
+
+void from_json(const json &j, SessionDynamicsConfig &c) {
+    ensureKnownKeys(
+        j, "session_dynamics",
+        {"topic_fatigue_weight", "creator_fatigue_weight", "novelty_match_weight",
+         "topic_fatigue_increment", "creator_fatigue_increment", "general_fatigue_scale",
+         "away_decay_half_life_seconds", "exit_bias", "exit_fatigue_weight", "exit_regret_weight",
+         "exit_poor_streak_weight", "exit_satisfaction_weight", "exit_interruption_weight",
+         "external_interruption_hazard", "regret_lambda", "fatigue_lambda", "failure_exit_lambda"});
+    readKey(j, "topic_fatigue_weight", c.topicFatigueWeight);
+    readKey(j, "creator_fatigue_weight", c.creatorFatigueWeight);
+    readKey(j, "novelty_match_weight", c.noveltyMatchWeight);
+    readKey(j, "topic_fatigue_increment", c.topicFatigueIncrement);
+    readKey(j, "creator_fatigue_increment", c.creatorFatigueIncrement);
+    readKey(j, "general_fatigue_scale", c.generalFatigueScale);
+    readKey(j, "away_decay_half_life_seconds", c.awayDecayHalfLifeSeconds);
+    readKey(j, "exit_bias", c.exitBias);
+    readKey(j, "exit_fatigue_weight", c.exitFatigueWeight);
+    readKey(j, "exit_regret_weight", c.exitRegretWeight);
+    readKey(j, "exit_poor_streak_weight", c.exitPoorStreakWeight);
+    readKey(j, "exit_satisfaction_weight", c.exitSatisfactionWeight);
+    readKey(j, "exit_interruption_weight", c.exitInterruptionWeight);
+    readKey(j, "external_interruption_hazard", c.externalInterruptionHazard);
+    readKey(j, "regret_lambda", c.regretLambda);
+    readKey(j, "fatigue_lambda", c.fatigueLambda);
+    readKey(j, "failure_exit_lambda", c.failureExitLambda);
+}
+
 void to_json(json &j, const ExperimentConfig &c) {
     j = json{{"simulation", c.simulation},
              {"recommendation", c.recommendation},
@@ -483,6 +538,7 @@ void to_json(json &j, const ExperimentConfig &c) {
              {"drift", c.drift},
              {"behaviour", c.behaviour},
              {"behaviour_v2", c.behaviourV2},
+             {"session_dynamics", c.sessionDynamics},
              {"reward", c.reward},
              {"evaluation", c.evaluation},
              {"realism", c.realism}};
@@ -491,8 +547,8 @@ void to_json(json &j, const ExperimentConfig &c) {
 void from_json(const json &j, ExperimentConfig &c) {
     ensureKnownKeys(j, "<top-level>",
                     {"simulation", "recommendation", "algorithm", "hnsw", "ranking", "learning",
-                     "exploration", "diversity", "drift", "behaviour", "behaviour_v2", "reward",
-                     "evaluation", "realism"});
+                     "exploration", "diversity", "drift", "behaviour", "behaviour_v2",
+                     "session_dynamics", "reward", "evaluation", "realism"});
     readKey(j, "simulation", c.simulation);
     readKey(j, "recommendation", c.recommendation);
     readKey(j, "algorithm", c.algorithm);
@@ -504,6 +560,7 @@ void from_json(const json &j, ExperimentConfig &c) {
     readKey(j, "drift", c.drift);
     readKey(j, "behaviour", c.behaviour);
     readKey(j, "behaviour_v2", c.behaviourV2);
+    readKey(j, "session_dynamics", c.sessionDynamics);
     readKey(j, "reward", c.reward);
     readKey(j, "evaluation", c.evaluation);
     readKey(j, "realism", c.realism);

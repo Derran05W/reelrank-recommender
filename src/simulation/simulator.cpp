@@ -46,6 +46,30 @@ constexpr float kAffinityLikedGain = 0.10f;
 constexpr float kAffinityCompletedGain = 0.02f;
 constexpr float kAffinityNotInterestedGain = -0.20f;
 
+// --- Phase 16 session-dynamics local helpers --------------------------------------------------
+double sigmoid(double x) { return 1.0 / (1.0 + std::exp(-x)); }
+float clamp01f(float v) { return std::clamp(v, 0.0f, 1.0f); }
+
+// Duration-format bucket (V2 TDD 4.7 "Format fatigue" on a repeated duration-bucket): short /
+// medium / long, edges the named constants in rr::sessionDynamics.
+int durationBucket(float seconds) {
+    if (seconds < static_cast<float>(sessionDynamics::kDurationBucketShortSeconds)) {
+        return 0;
+    }
+    if (seconds < static_cast<float>(sessionDynamics::kDurationBucketMediumSeconds)) {
+        return 1;
+    }
+    return 2;
+}
+
+// Mean regret per reel this session (the exit logit's "recent regret" term / the Regret-exit
+// discriminator). 0 on an empty session.
+double meanRegret(const HiddenSessionState &s) {
+    return s.impressionsThisSession > 0 ? static_cast<double>(s.accumulatedRegret) /
+                                              static_cast<double>(s.impressionsThisSession)
+                                        : 0.0;
+}
+
 } // namespace
 
 Simulator::Simulator(const BehaviourConfig &behaviour, const RewardConfig &reward, Rng rng,
@@ -61,6 +85,190 @@ Simulator::Simulator(const BehaviourConfig &behaviour, const BehaviourV2Config &
       behaviourV2_(BehaviourModelV2(behaviour, behaviourV2)),
       satisfactionRng_(std::move(satisfactionRng)) {}
 
+// Phase 16 constructor (realism.session_dynamics): additionally owns the exit/interruption streams
+// and the session-dynamics coefficients, and hands those coefficients to BehaviourModelV2 for the
+// fatigue modulation. stepV2 then runs the hidden-session lifecycle (below).
+Simulator::Simulator(const BehaviourConfig &behaviour, const BehaviourV2Config &behaviourV2,
+                     const SessionDynamicsConfig &sessionDynamics, const RewardConfig &reward,
+                     Rng behaviourRng, Rng satisfactionRng, Rng sessionExitRng, Rng interruptionRng,
+                     uint32_t recentWindow, double trendingHalfLifeSeconds)
+    : behaviour_(behaviour), reward_(reward), rng_(std::move(behaviourRng)),
+      recentWindow_(recentWindow), trendingHalfLifeSeconds_(trendingHalfLifeSeconds),
+      behaviourV2_(BehaviourModelV2(behaviour, behaviourV2)),
+      satisfactionRng_(std::move(satisfactionRng)), sessionDynamicsEnabled_(true),
+      sessionDynamicsConfig_(sessionDynamics), sessionExitRng_(std::move(sessionExitRng)),
+      interruptionRng_(std::move(interruptionRng)) {
+    behaviourV2_->configureSessionDynamics(sessionDynamicsConfig_);
+}
+
+// ===== Phase 16 session-exit + fatigue machinery (V2 TDD 4.7-4.9) =============================
+// Pure functions of config + state (+ this impression's reel/latent); NO rng, NO clock read.
+// stepV2 composes them under realism.session_dynamics; unit tests drive them directly.
+
+void startSession(const SessionDynamicsConfig &cfg, HiddenSessionState &s, Timestamp now) {
+    // Away-time decay 2^(-awayGap/halfLife). awayGap comes from the SHARED logical clock: within
+    // the round-robin runner `now` advances across all other users between this user's successive
+    // sessions, so the gap = now(this session's first impression) - previousSessionEnd (the last
+    // impression finish of the previous session). 0 on the first-ever session (no previous end).
+    const double awayGap =
+        s.previousSessionEnd == 0
+            ? 0.0
+            : static_cast<double>(now > s.previousSessionEnd ? now - s.previousSessionEnd : 0);
+    const double decay = std::exp2(-awayGap / cfg.awayDecayHalfLifeSeconds);
+    // SURVIVING fatigue channels decay but persist (repetition fatigue fades while away, V2 4.7).
+    s.generalFatigue = static_cast<float>(s.generalFatigue * decay);
+    s.formatFatigue = static_cast<float>(s.formatFatigue * decay);
+    s.musicRepetitionFatigue = static_cast<float>(s.musicRepetitionFatigue * decay);
+    s.emotionalIntensityFatigue = static_cast<float>(s.emotionalIntensityFatigue * decay);
+    for (auto &kv : s.topicFatigue) {
+        kv.second = static_cast<float>(kv.second * decay);
+    }
+    for (auto &kv : s.creatorFatigue) {
+        kv.second = static_cast<float>(kv.second * decay);
+    }
+    // Carried-over satisfaction fades toward neutral at the same away half-life and SEEDS the new
+    // session's EMA (startingSatisfaction is the "next-session starting satisfaction" hook, 4.9;
+    // decay choice: same half-life as fatigue — long gaps reset mood, short gaps preserve it).
+    s.startingSatisfaction = static_cast<float>(s.currentSatisfaction * decay);
+    s.currentSatisfaction = s.startingSatisfaction;
+    // Per-session accumulators reset. Long-term preferences live on User/HiddenUserState — NOT
+    // touched here (Tier 2 acceptance: re-entry keeps prefs, gets a fresh session).
+    s.accumulatedRegret = 0.0f;
+    s.regretSum = 0.0f;
+    s.satisfactionSum = 0.0f;
+    s.watchSecondsSum = 0.0f;
+    s.noveltyNeed = 0.0f;
+    s.boredom = 0.0f;
+    s.remainingAttention = 1.0f;
+    s.impressionsThisSession = 0;
+    s.consecutivePoorReels = 0;
+    s.sessionStartTime = now;
+    s.lastImpressionTime = now;
+    s.lastDurationBucket = -1;
+    s.lastMusicEmbedding.clear();
+}
+
+void accumulateFatigue(const SessionDynamicsConfig &cfg, HiddenSessionState &s, const Reel &reel,
+                       const LatentReaction &latent, float watchSeconds) {
+    using namespace sessionDynamics;
+    const float w = std::max(0.0f, watchSeconds);
+    // Topic + creator fatigue (config increments), each clamped [0,1].
+    float &tf = s.topicFatigue[reel.primaryTopic];
+    tf = clamp01f(tf + static_cast<float>(cfg.topicFatigueIncrement));
+    float &cf = s.creatorFatigue[reel.creatorId];
+    cf = clamp01f(cf + static_cast<float>(cfg.creatorFatigueIncrement));
+    // Format fatigue on a repeated duration-bucket; always remember this reel's bucket.
+    const int bucket = durationBucket(reel.durationSeconds);
+    if (s.lastDurationBucket == bucket) {
+        s.formatFatigue = clamp01f(s.formatFatigue + static_cast<float>(kFormatFatigueIncrement));
+    }
+    s.lastDurationBucket = bucket;
+    // Music repetition when consecutive reels share a music centre (dot > threshold); remember it.
+    if (!s.lastMusicEmbedding.empty() &&
+        s.lastMusicEmbedding.size() == reel.musicEmbedding.size() && !reel.musicEmbedding.empty() &&
+        static_cast<double>(dot(s.lastMusicEmbedding, reel.musicEmbedding)) >
+            kMusicRepeatThreshold) {
+        s.musicRepetitionFatigue =
+            clamp01f(s.musicRepetitionFatigue + static_cast<float>(kMusicRepetitionIncrement));
+    }
+    s.lastMusicEmbedding = reel.musicEmbedding;
+    // Emotional-intensity fatigue from sustained arousal exposure.
+    s.emotionalIntensityFatigue =
+        clamp01f(s.emotionalIntensityFatigue + static_cast<float>(kEmotionalIntensityFatigueScale) *
+                                                   std::max(0.0f, reel.emotionalIntensity));
+    // General scrolling fatigue from P14's fatigueDelta (emitted for exactly this, latent_model).
+    s.generalFatigue = clamp01f(s.generalFatigue +
+                                static_cast<float>(cfg.generalFatigueScale * latent.fatigueDelta));
+    // Attention depletes with watch time.
+    s.remainingAttention =
+        clamp01f(s.remainingAttention - static_cast<float>(kAttentionDepletionPerWatchSecond) * w);
+    // Novelty need rises with topic repetition (the just-updated topicFatigue), falls on novelty.
+    s.noveltyNeed = clamp01f(s.noveltyNeed + static_cast<float>(kNoveltyNeedRise) * tf -
+                             static_cast<float>(kNoveltyNeedFall) * std::max(0.0f, reel.novelty));
+    // Boredom rises when the reel's (adjusted) emotional value is low.
+    s.boredom =
+        clamp01f(s.boredom +
+                 static_cast<float>(kBoredomRise *
+                                    std::max(0.0, kBoredomEmoThreshold -
+                                                      static_cast<double>(latent.emotionalValue))));
+    // Satisfaction EMA over the (fatigue-adjusted) latent — the welfare-visible session mood.
+    s.currentSatisfaction = static_cast<float>(
+        (1.0 - kSatisfactionEmaAlpha) * static_cast<double>(s.currentSatisfaction) +
+        kSatisfactionEmaAlpha * static_cast<double>(latent.immediateSatisfaction));
+    // Regret + U_s sums.
+    s.accumulatedRegret += latent.regret;
+    s.regretSum += latent.regret;
+    s.satisfactionSum += latent.immediateSatisfaction;
+    s.watchSecondsSum += w;
+    // Poor-streak: consecutive reels whose latent satisfaction is below the poor threshold.
+    if (static_cast<double>(latent.immediateSatisfaction) < kPoorSatisfactionThreshold) {
+        s.consecutivePoorReels += 1;
+    } else {
+        s.consecutivePoorReels = 0;
+    }
+    s.impressionsThisSession += 1;
+}
+
+double sessionExitProbability(const SessionDynamicsConfig &cfg, const HiddenSessionState &s,
+                              bool interruption) {
+    const double logit = cfg.exitBias +
+                         cfg.exitFatigueWeight * static_cast<double>(s.generalFatigue) +
+                         cfg.exitRegretWeight * meanRegret(s) +
+                         cfg.exitPoorStreakWeight * static_cast<double>(s.consecutivePoorReels) -
+                         cfg.exitSatisfactionWeight * static_cast<double>(s.currentSatisfaction) +
+                         cfg.exitInterruptionWeight * (interruption ? 1.0 : 0.0);
+    return sigmoid(logit);
+}
+
+SessionExitType classifyExit(const SessionDynamicsConfig & /*cfg*/, const HiddenSessionState &s,
+                             bool interruption) {
+    using namespace sessionDynamics;
+    // Order (V2 TDD 4.8): External > Failure (early + poor) > Regret > Fatigue > Satisfied. Never
+    // RunEnded (that is the harness's label for sessions still open at run end).
+    if (interruption) {
+        return SessionExitType::External;
+    }
+    if (s.impressionsThisSession < kFailureMaxImpressions &&
+        static_cast<double>(s.currentSatisfaction) < kFailureSatisfactionThreshold) {
+        return SessionExitType::Failure;
+    }
+    if (meanRegret(s) > kRegretExitMeanThreshold) {
+        return SessionExitType::Regret;
+    }
+    if (static_cast<double>(s.generalFatigue) > kFatigueExitThreshold ||
+        static_cast<double>(s.remainingAttention) < kAttentionDepletedThreshold) {
+        return SessionExitType::Fatigue;
+    }
+    return SessionExitType::Satisfied;
+}
+
+SessionRecord makeSessionRecord(const SessionDynamicsConfig &cfg, const HiddenSessionState &s,
+                                UserId userId, SessionId sessionId, SessionExitType exitType,
+                                Timestamp lastImpressionFinish) {
+    SessionRecord rec;
+    rec.userId = userId;
+    rec.sessionId = sessionId;
+    rec.exitType = exitType;
+    rec.impressions = s.impressionsThisSession;
+    rec.durationSeconds = static_cast<float>(
+        lastImpressionFinish >= s.sessionStartTime ? lastImpressionFinish - s.sessionStartTime : 0);
+    rec.satisfactionSum = s.satisfactionSum;
+    rec.regretSum = s.regretSum;
+    rec.harmfulFatigue =
+        std::max(0.0f, static_cast<float>(static_cast<double>(s.generalFatigue) -
+                                          sessionDynamics::kHarmfulFatigueThreshold));
+    const double failure = exitType == SessionExitType::Failure ? 1.0 : 0.0;
+    rec.sessionUtility =
+        static_cast<float>(static_cast<double>(s.satisfactionSum) -
+                           cfg.regretLambda * static_cast<double>(s.regretSum) -
+                           cfg.fatigueLambda * static_cast<double>(rec.harmfulFatigue) -
+                           cfg.failureExitLambda * failure);
+    rec.startingSatisfaction = s.startingSatisfaction;
+    rec.startTime = s.sessionStartTime;
+    rec.endTime = lastImpressionFinish;
+    return rec;
+}
+
 // Realism V2 step (Phase 14, realism.latent_reactions). Structurally a sibling of step(): the
 // SAME reward (unchanged RewardModel on observables), clock advance (watch + browse overhead),
 // session resolution (V1 rotation KEPT — P16 replaces it), reel counters/trending, and user
@@ -74,15 +282,31 @@ Simulator::Simulator(const BehaviourConfig &behaviour, const BehaviourV2Config &
 // D18); no latent value reaches the event or any recommender-visible structure.
 StepResult Simulator::stepV2(User &user, const HiddenUserState &hidden, Reel &reel,
                              const Creator &creator, const StepV2Inputs &v2,
-                             LatentReaction &latentOut) {
+                             LatentReaction &latentOut, SessionRecord *closedSession) {
     assert(behaviourV2_.has_value() && "stepV2 requires the Realism V2 constructor");
     assert(v2.hiddenReel != nullptr && "StepV2Inputs.hiddenReel is required");
     StepResult result{};
 
+    // 0. Phase 16 session lifecycle (realism.session_dynamics ONLY; nullptr session otherwise =>
+    //    Phase 14 behaviour byte-identical). A session STARTS on the first-ever impression or the
+    //    first after an exit closed one — both leave impressionsThisSession == 0. On start,
+    //    startSession away-decays surviving fatigue + carried-over satisfaction and resets the
+    //    per-session accumulators.
+    HiddenSessionState *session = nullptr;
+    if (sessionDynamicsEnabled_) {
+        session = &hiddenSessions_[user.id];
+        if (session->impressionsThisSession == 0) {
+            startSession(sessionDynamicsConfig_, *session, now_);
+        }
+    }
+
     // 1. Ground-truth reaction. rng_ is the "behaviour" stream, satisfactionRng_ the "satisfaction"
     //    stream; BehaviourModelV2 draws the latent on the latter and the observables on the former.
+    //    Under session dynamics the `session` pointer enables fatigue modulation: it adjusts the
+    //    latent BEFORE both the observable sampling AND latentOut (welfare sees the adjusted
+    //    truth).
     result.outcome = behaviourV2_->simulate(hidden, reel, *v2.hiddenReel, creator, rng_,
-                                            satisfactionRng_, latentOut);
+                                            satisfactionRng_, latentOut, session);
     const BehaviourOutcome &outcome = result.outcome;
 
     // 2. Reward: the UNCHANGED engagement-proxy RewardModel over the observable outcome (no extra
@@ -99,24 +323,32 @@ StepResult Simulator::stepV2(User &user, const HiddenUserState &hidden, Reel &re
     const Timestamp finishTs = startTs + watchedSeconds;
     now_ += watchedSeconds + kBrowseOverheadSeconds;
 
-    // 4. Session resolution — identical to V1 step (session rotation KEPT; P16 replaces it). May
-    //    draw one gaussian from rng_ (the "behaviour" stream) via sampleSessionTarget.
+    // 4. Session-id resolution. Gate-off: byte-identical V1 rotation (may draw one gaussian on the
+    //    "behaviour" stream via sampleSessionTarget). Gate-on (session dynamics): the exit model
+    //    owns session boundaries (step 8) — the V1 rotation DRAW is OWNED-OUT here (D19 wholesale
+    //    replacement: the exit model replaces avgSessionLength rotation, so the "behaviour" stream
+    //    takes NO rotation gaussian under the gate), and we only open the user's first session id.
     auto [it, inserted] = sessions_.try_emplace(user.id);
-    SessionState &session = it->second;
-    if (inserted) {
-        session.sessionId = SessionId{0};
-        session.targetLength = sampleSessionTarget(hidden.avgSessionLength);
+    SessionState &vsession = it->second;
+    if (sessionDynamicsEnabled_) {
+        if (inserted) {
+            vsession.sessionId = SessionId{0};
+            user.currentSessionLength = 0;
+        }
+    } else if (inserted) {
+        vsession.sessionId = SessionId{0};
+        vsession.targetLength = sampleSessionTarget(hidden.avgSessionLength);
         user.currentSessionLength = 0;
-    } else if (user.currentSessionLength >= session.targetLength) {
-        session.sessionId = SessionId{session.sessionId.value + 1};
-        session.targetLength = sampleSessionTarget(hidden.avgSessionLength);
+    } else if (user.currentSessionLength >= vsession.targetLength) {
+        vsession.sessionId = SessionId{vsession.sessionId.value + 1};
+        vsession.targetLength = sampleSessionTarget(hidden.avgSessionLength);
         user.currentSessionLength = 0;
     }
 
     // 5. Assemble the event: the nine V1 observable fields exactly as step(), then the V2
     //    observables (V2 TDD 5). requestId/positionInFeed/provenance/exploration come from the
     //    harness (StepV2Inputs); start/finish/dwell/replay/comment/save/profile come from this
-    //    impression. observedExitAfterImpression stays false until P16 wires probabilistic exit.
+    //    impression. observedExitAfterImpression is set in step 8 iff a probabilistic exit fires.
     //    Every field is an observable — no latent leaks (leak-audit enforced).
     result.event = InteractionEvent{user.id,
                                     reel.id,
@@ -126,7 +358,7 @@ StepResult Simulator::stepV2(User &user, const HiddenUserState &hidden, Reel &re
                                     outcome.watchRatio,
                                     reward,
                                     now_,
-                                    session.sessionId};
+                                    vsession.sessionId};
     result.event.positionInFeed = v2.positionInFeed;
     result.event.requestId = v2.requestId;
     result.event.requestTimestamp = v2.requestTimestamp;
@@ -184,6 +416,42 @@ StepResult Simulator::stepV2(User &user, const HiddenUserState &hidden, Reel &re
     if (affinityDelta != 0.0f) {
         float &affinity = user.creatorAffinity[reel.creatorId];
         affinity = std::clamp(affinity + affinityDelta, 0.0f, 1.0f);
+    }
+
+    // 8. Phase 16 session dynamics: fatigue accumulation, then the probabilistic classified exit
+    //    (V2 TDD 4.7/4.8). Fatigue is accumulated AFTER the behaviour sample (draw order above is
+    //    unchanged). The two exit draws happen EVERY impression, in a pinned order: the external-
+    //    interruption hazard on interruptionRng_, THEN the exit bernoulli on sessionExitRng_ — a
+    //    FIXED count of exactly one draw per stream per impression, so both streams stay aligned
+    //    regardless of feed content, exit, or interruption (D8/D19).
+    if (sessionDynamicsEnabled_) {
+        accumulateFatigue(sessionDynamicsConfig_, *session, reel, latentOut, outcome.watchSeconds);
+        session->lastImpressionTime = finishTs;
+
+        const bool interruption =
+            interruptionRng_.bernoulli(sessionDynamicsConfig_.externalInterruptionHazard);
+        const double pExit = sessionExitProbability(sessionDynamicsConfig_, *session, interruption);
+        const bool exit = sessionExitRng_.bernoulli(pExit);
+        if (exit) {
+            // Recommender-visible observable (P14 event field): last event of the session.
+            result.event.observedExitAfterImpression = true;
+            const SessionExitType type =
+                classifyExit(sessionDynamicsConfig_, *session, interruption);
+            if (closedSession != nullptr) {
+                *closedSession = makeSessionRecord(sessionDynamicsConfig_, *session, user.id,
+                                                   vsession.sessionId, type, finishTs);
+            }
+            // Rotate the V1-visible session id + reset lengths, coherent with V1 bookkeeping (the
+            // exit REPLACES avgSessionLength rotation). impressionsThisSession=0 marks the NEXT
+            // impression a session start (startSession then away-decays and resets).
+            vsession.sessionId = SessionId{vsession.sessionId.value + 1};
+            user.currentSessionLength = 0;
+            session->previousSessionEnd = finishTs;
+            session->impressionsThisSession = 0;
+        }
+    } else if (closedSession != nullptr) {
+        // Gate-off: no session closes in stepV2 (the harness emits RunEnded records at run end).
+        *closedSession = SessionRecord{};
     }
 
     return result;
@@ -301,5 +569,31 @@ StepResult Simulator::step(User &user, const HiddenUserState &hidden, Reel &reel
 }
 
 Timestamp Simulator::now() const { return now_; }
+
+std::vector<SessionRecord> Simulator::drainOpenSessions() {
+    std::vector<SessionRecord> drained;
+    if (!sessionDynamicsEnabled_) {
+        return drained;
+    }
+    // Ascending-UserId order: unordered_map iteration order is not deterministic, and these
+    // records feed deterministic CSVs.
+    std::vector<UserId> ids;
+    ids.reserve(hiddenSessions_.size());
+    for (const auto &[id, state] : hiddenSessions_) {
+        if (state.impressionsThisSession > 0) {
+            ids.push_back(id);
+        }
+    }
+    std::sort(ids.begin(), ids.end(), [](UserId a, UserId b) { return a.value < b.value; });
+    drained.reserve(ids.size());
+    for (const UserId id : ids) {
+        const HiddenSessionState &state = hiddenSessions_.at(id);
+        const SessionId sessionId = sessions_[id].sessionId;
+        drained.push_back(makeSessionRecord(sessionDynamicsConfig_, state, id, sessionId,
+                                            SessionExitType::RunEnded, state.lastImpressionTime));
+    }
+    hiddenSessions_.clear();
+    return drained;
+}
 
 } // namespace rr

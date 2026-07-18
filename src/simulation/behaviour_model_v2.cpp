@@ -129,6 +129,25 @@ constexpr double kNotInterestedRegretGain = 0.4;
 // above it collapses to (at least) PartialWatch (mirrors the V1 model's threshold).
 constexpr double kImpressionMaxRatio = 0.02;
 
+// --- Phase 16 fatigue modulation shape constants (V2 TDD 4.7) ----------------------------------
+// The alpha/beta/gamma repetition/creator/novelty coefficients live on SessionDynamicsConfig
+// (tuning surface). These two are the flat drags no experiment varies (D24): general scrolling
+// fatigue hits everyone regardless of repetition tolerance, and sustained high-arousal exposure +
+// boredom sap emotionalValue. Documented at fatigueSatisfactionDelta / fatigueEmotionalDelta.
+constexpr double kGeneralFatigueSatWeight = 0.5; // generalFatigue drag on immediateSatisfaction
+constexpr double kEmoFatigueEmoWeight = 0.6;     // emotionalIntensityFatigue drag on emotionalValue
+constexpr double kBoredomEmoWeight = 0.4;        // boredom drag on emotionalValue
+
+// Lookup into a const fatigue map with a 0 default (operator[] would insert on a const map).
+float fatigueOf(const std::unordered_map<TopicId, float> &m, TopicId k) {
+    const auto it = m.find(k);
+    return it == m.end() ? 0.0f : it->second;
+}
+float fatigueOf(const std::unordered_map<CreatorId, float> &m, CreatorId k) {
+    const auto it = m.find(k);
+    return it == m.end() ? 0.0f : it->second;
+}
+
 struct Band {
     double lo;
     double hi;
@@ -196,14 +215,63 @@ InteractionType collapsePrimaryType(const BehaviourOutcome &o) {
 BehaviourModelV2::BehaviourModelV2(const BehaviourConfig &v1Config, const BehaviourV2Config &config)
     : v1Config_(v1Config), config_(config) {}
 
+void BehaviourModelV2::configureSessionDynamics(const SessionDynamicsConfig &config) {
+    sessionConfig_ = config;
+}
+
+// Fatigue drag on immediateSatisfaction (the plan formula; see the header). alpha covers ALL
+// repetition channels (topic + duration-format + music-repetition), modulated DOWN by the user's
+// repetitionTolerance; beta covers same-creator fatigue, modulated down by creatorLoyalty; a flat
+// generalFatigue drag; the novelty term ADDS utility when a novelty-hungry user meets novel
+// content. All tolerance factors clamped to [0,1] (traits are sampled in [0,1], userTraitsV2).
+double fatigueSatisfactionDelta(const SessionDynamicsConfig &cfg, const HiddenUserState &hidden,
+                                const Reel &reel, const HiddenSessionState &session) {
+    const double repFactor = clamp01(1.0 - static_cast<double>(hidden.repetitionTolerance));
+    const double loyalFactor = clamp01(1.0 - static_cast<double>(hidden.creatorLoyalty));
+    const double alphaEff = cfg.topicFatigueWeight * repFactor;
+    const double betaEff = cfg.creatorFatigueWeight * loyalFactor;
+    const double repetitionFatigue =
+        static_cast<double>(fatigueOf(session.topicFatigue, reel.primaryTopic)) +
+        static_cast<double>(session.formatFatigue) +
+        static_cast<double>(session.musicRepetitionFatigue);
+    const double creatorFatigue =
+        static_cast<double>(fatigueOf(session.creatorFatigue, reel.creatorId));
+    const double noveltyMatch =
+        static_cast<double>(session.noveltyNeed) * clamp01(static_cast<double>(reel.novelty));
+    return -alphaEff * repetitionFatigue - betaEff * creatorFatigue -
+           kGeneralFatigueSatWeight * static_cast<double>(session.generalFatigue) +
+           cfg.noveltyMatchWeight * noveltyMatch;
+}
+
+// Fatigue drag on emotionalValue: sustained high-arousal exposure and boredom both flatten affect.
+double fatigueEmotionalDelta(const SessionDynamicsConfig & /*cfg*/, const HiddenSessionState &s) {
+    return -kEmoFatigueEmoWeight * static_cast<double>(s.emotionalIntensityFatigue) -
+           kBoredomEmoWeight * static_cast<double>(s.boredom);
+}
+
 BehaviourOutcome BehaviourModelV2::simulate(const HiddenUserState &hidden, const Reel &reel,
                                             const HiddenReelState &hiddenReel,
                                             const Creator &creator, Rng &behaviourRng,
-                                            Rng &satisfactionRng, LatentReaction &latentOut) const {
-    // Stage 1 — the hidden latent, on the "satisfaction" stream (package A; a neutral no-op stub
-    // in package B's tree). Its per-call draw count on satisfactionRng is package A's FIXED
-    // contract (latent_model.hpp), independent of archetype/branch.
+                                            Rng &satisfactionRng, LatentReaction &latentOut,
+                                            const HiddenSessionState *session) const {
+    // Stage 1 — the hidden latent, on the "satisfaction" stream (package A). Its per-call draw
+    // count on satisfactionRng is package A's FIXED contract (latent_model.hpp), independent of
+    // archetype/branch.
     latentOut = computeLatentReaction(config_, hidden, reel, hiddenReel, creator, satisfactionRng);
+    // Stage 1b — Phase 16 fatigue modulation (V2 TDD 4.7), session path ONLY. A fatigued user
+    // genuinely enjoys the same reel less: adjust the latent's immediateSatisfaction/emotionalValue
+    // HERE, before both the observable sampling below AND the caller's welfare accumulation (so the
+    // welfare metrics see the fatigue-adjusted truth — the realism point of repetition). Pure
+    // arithmetic on latentOut: zero rng draws, so the pinned draw order below is unchanged.
+    // nullptr session (every pre-Phase-16 / gate-off call site) => byte-identical Phase 14.
+    if (session != nullptr) {
+        const double satAdj = static_cast<double>(latentOut.immediateSatisfaction) +
+                              fatigueSatisfactionDelta(sessionConfig_, hidden, reel, *session);
+        latentOut.immediateSatisfaction = static_cast<float>(std::clamp(satAdj, -1.0, 1.0));
+        const double emoAdj = static_cast<double>(latentOut.emotionalValue) +
+                              fatigueEmotionalDelta(sessionConfig_, *session);
+        latentOut.emotionalValue = static_cast<float>(clamp01(emoAdj));
+    }
     // Stage 2 — the observables, on the "behaviour" stream (owned wholesale here, D19).
     return sampleObservables(hidden, reel, hiddenReel, creator, latentOut, behaviourRng);
 }

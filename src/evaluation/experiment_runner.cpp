@@ -113,8 +113,14 @@ ExperimentResult ExperimentRunner::run() {
     //    "satisfaction" stream (D19) — gate-off runs fork exactly the V1 streams and stay
     //    byte-identical (D17).
     const bool latentReactions = config_.realism.latentReactions;
+    const bool sessionDynamics = config_.realism.sessionDynamics;
     Simulator sim =
-        latentReactions
+        sessionDynamics
+            ? Simulator(config_.behaviour, config_.behaviourV2, config_.sessionDynamics,
+                        config_.reward, forkRng(seed, "behaviour"), forkRng(seed, "satisfaction"),
+                        forkRng(seed, "session-exit"), forkRng(seed, "external-interruption"),
+                        config_.learning.recentWindow, config_.ranking.trendingHalfLifeSeconds)
+        : latentReactions
             ? Simulator(config_.behaviour, config_.behaviourV2, config_.reward,
                         forkRng(seed, "behaviour"), forkRng(seed, "satisfaction"),
                         config_.learning.recentWindow, config_.ranking.trendingHalfLifeSeconds)
@@ -174,6 +180,16 @@ ExperimentResult ExperimentRunner::run() {
     // size so the buckets are deterministic. Constructed unconditionally (cheap); left un-fed and
     // un-reduced when the gate is off (byte-identical, D17).
     WelfareMetrics welfareMetrics(rounds, config_.realism.archetypes.size());
+    // Session-health metric group (Phase 16, V2 TDD §4.9/§6, D22): reduces the exit-aware loop's
+    // collected SessionRecords (one per probabilistic exit) into per-round + overall session
+    // statistics + session utility U_s, all under the D18 EVALUATION CARVE-OUT — SessionRecord's
+    // hidden-derived values never reach a recommender-visible structure. Fed ONLY under
+    // realism.session_dynamics (via the stepV2 out-slot in the consume loop below); reduced into
+    // ExperimentResult::sessionHealth after the round loop and emitted as a gate-on-only
+    // CSV/summary block. Sized to the round count and given the session-dynamics lambdas (for U_s);
+    // constructed unconditionally (cheap), left un-fed and un-reduced when the gate is off
+    // (byte-identical, D17).
+    SessionHealthMetrics sessionHealth(rounds, config_.sessionDynamics);
     // Estimate<->hidden alignment (TDD 18.5), one mean per round measured after the round
     // completes.
     std::vector<double> alignmentByRound(rounds, 0.0);
@@ -394,6 +410,12 @@ ExperimentResult ExperimentRunner::run() {
             const size_t preFeedDone =
                 doneByUser[u]; // impression index base for injected-user curve
             const size_t toConsume = std::min(remaining, resp.reels.size());
+            // Phase 16 exit-aware consumption (V2 TDD 4.8, realism.session_dynamics): the actual
+            // number of impressions simulated from THIS feed, which is < toConsume when the session
+            // exits mid-feed (the remaining items are never simulated — no draws, deterministic).
+            // With session dynamics off it always equals toConsume, so the budget bookkeeping below
+            // is byte-identical to the pre-Phase-16 loop.
+            size_t consumed = 0;
             for (size_t k = 0; k < toConsume; ++k) {
                 const ReelId reelId = resp.reels[k].reelId;
                 Reel &reel = ds.reels[reelId.value];
@@ -414,6 +436,9 @@ ExperimentResult ExperimentRunner::run() {
                 // V1 step, byte-identical to pre-Phase-14 (D17).
                 LatentReaction latent;
                 StepResult stepStorage;
+                // Phase 16: filled by stepV2 with the COMPLETED session when this impression closes
+                // one under realism.session_dynamics; read only when the exit observable fires.
+                SessionRecord closedRec;
                 if (latentReactions) {
                     const RankedReel &served = resp.reels[k];
                     StepV2Inputs v2;
@@ -443,7 +468,13 @@ ExperimentResult ExperimentRunner::run() {
                             v2.sourceProvenance = CandidateSource::Exploration;
                         }
                     }
-                    stepStorage = sim.stepV2(user, ds.hiddenStates[u], reel, creator, v2, latent);
+                    // Phase 16 (realism.session_dynamics): pass a SessionRecord out-slot so the
+                    // simulator can hand back a COMPLETED session when this impression closes one
+                    // (probabilistic exit, V2 TDD 4.8). nullptr when session dynamics is off — the
+                    // stepV2 default, byte-identical to the P14/P15 call.
+                    SessionRecord *recSlot = sessionDynamics ? &closedRec : nullptr;
+                    stepStorage =
+                        sim.stepV2(user, ds.hiddenStates[u], reel, creator, v2, latent, recSlot);
                     // Welfare-group feed (evaluation carve-out, D18): the hidden latent +
                     // observable watch time + the reel's hidden archetype index. watchSeconds is
                     // the satisfaction-per-minute denominator; archetypeIndex drives the exposure
@@ -526,8 +557,23 @@ ExperimentResult ExperimentRunner::run() {
                         acc.regretSum += coldStartRequestRegret;
                     }
                 }
+
+                // Phase 16 exit-aware consumption (V2 TDD 4.8): this impression WAS simulated (its
+                // metrics counted above), so bump the consumed count; then, under
+                // realism.session_dynamics, if it CLOSED the session, collect the completed
+                // SessionRecord for the session-health group and STOP consuming this feed — the
+                // remaining feed items are never simulated (no draws → deterministic). The user's
+                // NEXT request opens a fresh session; interactionsPerUser still counts IMPRESSIONS,
+                // so an exit merely fragments the budget across sessions. Guarded by
+                // sessionDynamics, so a gate-off run consumes the whole feed exactly as the
+                // pre-Phase-16 loop did.
+                ++consumed;
+                if (sessionDynamics && stepStorage.event.observedExitAfterImpression) {
+                    sessionHealth.add(round, closedRec);
+                    break;
+                }
             }
-            doneByUser[u] += toConsume;
+            doneByUser[u] += consumed;
         }
 
         // End-of-round estimate<->hidden alignment (TDD 18.5): mean over ALL users of
@@ -555,6 +601,15 @@ ExperimentResult ExperimentRunner::run() {
 
         // Cumulative-distinct injected reels exposed through the END of this round (TDD 18.5).
         distinctInjectedExposedByRound[round] = exposedInjectedReels.size();
+    }
+
+    // Phase 16 run-end drain (integration): sessions still open when the run ends become
+    // RunEnded records (reported as open_sessions; excluded from every exit-rate denominator).
+    // Attributed to the LAST round, matching the collected-where-closed convention.
+    if (sessionDynamics && rounds > 0) {
+        for (const SessionRecord &openRec : sim.drainOpenSessions()) {
+            sessionHealth.add(rounds - 1, openRec);
+        }
     }
 
     // 4. Assemble the result.
@@ -661,6 +716,36 @@ ExperimentResult ExperimentRunner::run() {
         }
         result.welfare = welfareMetrics.reduce(archetypeNames);
         result.welfare.configured = true;
+    }
+
+    // Session-health reduction (Phase 16, V2 TDD §4.9/§6, D22): the session-health module reduces
+    // the exit-aware loop's collected SessionRecords into per-round + overall session statistics +
+    // session utility U_s (evaluation carve-out, D18). Populated ONLY under
+    // realism.session_dynamics; a gate-off run leaves sessionHealth.configured false and emits no
+    // session_health block/CSV (byte-identical to pre-Phase-16, D17). Deterministic (a pure
+    // reduction of the collected records). Under the P16 scaffold stub the loop closes zero
+    // sessions (stepV2 never fires the exit observable), so this reduces to an all-zero,
+    // well-formed report — the populated path is exercised once package A lands the exit model.
+    result.sessionHealth.configured = sessionDynamics;
+    if (sessionDynamics) {
+        result.sessionHealth = sessionHealth.reduce();
+        result.sessionHealth.configured = true;
+
+        // Realize the hidden-welfare group's harmful_fatigue column (Phase 15 shipped it as a
+        // NOT-YET-MODELED constant 0). Under session dynamics it is the mean end-of-session harmful
+        // fatigue over closed sessions — overall from the session-health overall mean, per round
+        // from the round mean. This is the ONLY place the welfare group's harmful_fatigue is
+        // filled; under P15-only gates this block does not run and the column stays 0, keeping the
+        // P15 welfare output byte-identical (documented in results_writer). result.welfare is
+        // always populated here because session_dynamics requires latent_reactions (D17 gate
+        // dependency).
+        result.welfare.harmfulFatigue = result.sessionHealth.harmfulFatigueMean;
+        for (std::size_t r = 0; r < result.welfare.byRound.size(); ++r) {
+            if (r < result.sessionHealth.byRound.size()) {
+                result.welfare.byRound[r].harmfulFatigue =
+                    result.sessionHealth.byRound[r].harmfulFatigueMean;
+            }
+        }
     }
 
     result.retrievalSampleCount = totalRetrievalSamples;

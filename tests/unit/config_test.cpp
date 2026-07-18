@@ -401,6 +401,34 @@ TEST(ConfigTest, OracleSatisfactionAlgorithmRoundTripsButFactoryRejects) {
     EXPECT_STREQ(toString(RecommendationAlgorithm::OracleSatisfaction), "oracle_satisfaction");
 }
 
+// --- Realism V2 Phase 16: session-dynamics gate + block ---------------------------------------
+
+TEST(ConfigTest, SessionDynamicsGateRequiresLatentReactions) {
+    ExperimentConfig def;
+    EXPECT_FALSE(def.realism.sessionDynamics);
+    json ok = {{"realism",
+                {{"content_v2", true}, {"latent_reactions", true}, {"session_dynamics", true}}}};
+    EXPECT_TRUE(ok.get<ExperimentConfig>().realism.sessionDynamics);
+    json bad = {{"realism", {{"content_v2", true}, {"session_dynamics", true}}}};
+    EXPECT_THROW(bad.get<ExperimentConfig>(), std::invalid_argument);
+}
+
+TEST(ConfigTest, SessionDynamicsBlockParsesRoundTripsAndRejectsUnknownKeys) {
+    ExperimentConfig def;
+    EXPECT_DOUBLE_EQ(def.sessionDynamics.exitBias, -3.6);
+    EXPECT_DOUBLE_EQ(def.sessionDynamics.regretLambda, 1.0);
+    json j = {{"session_dynamics", {{"exit_bias", -2.0}, {"topic_fatigue_weight", 0.9}}}};
+    auto c = j.get<ExperimentConfig>();
+    EXPECT_DOUBLE_EQ(c.sessionDynamics.exitBias, -2.0);
+    EXPECT_DOUBLE_EQ(c.sessionDynamics.topicFatigueWeight, 0.9);
+    EXPECT_DOUBLE_EQ(c.sessionDynamics.awayDecayHalfLifeSeconds,
+                     def.sessionDynamics.awayDecayHalfLifeSeconds);
+    json out = c;
+    EXPECT_EQ(out.get<ExperimentConfig>(), c);
+    json bad = {{"session_dynamics", {{"exit_bais", -2.0}}}};
+    EXPECT_THROW(bad.get<ExperimentConfig>(), std::invalid_argument);
+}
+
 TEST(ConfigTest, BehaviourV2BlockParsesRoundTripsAndRejectsUnknownKeys) {
     ExperimentConfig def;
     EXPECT_DOUBLE_EQ(def.behaviourV2.topicWeight, 1.5);

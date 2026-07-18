@@ -234,6 +234,12 @@ struct RealismConfig {
     // the V1 BehaviourModel is untouched and serves all gate-off runs. REQUIRES content_v2
     // (throws at config load otherwise, D17).
     bool latentReactions = false;
+    // Phase 16 gate: hidden per-session state, fatigue dynamics, and the probabilistic
+    // classified exit model (streams "session-exit"/"external-interruption", D19), replacing
+    // the V1 avgSessionLength rotation under the gate — session length becomes an OUTCOME of
+    // feed quality (V2 TDD 4.6-4.9). REQUIRES latent_reactions (throws at config load
+    // otherwise).
+    bool sessionDynamics = false;
     // Size of the global language set (V2 TDD 4.1); language ids are 0..languages-1 with the
     // skewed distribution rr::languageWeights. Must be >= 1.
     uint32_t languages = 8;
@@ -286,6 +292,43 @@ struct BehaviourV2Config {
     bool operator==(const BehaviourV2Config &) const = default;
 };
 
+// Session-dynamics parameters (V2 TDD 4.6-4.9, Phase 16). All coefficients the TDD mandates
+// config-driven: the fatigue modulation of BehaviourModelV2's utility (effective utility =
+// base - alpha*topicFatigue - beta*creatorFatigue + gamma*noveltyMatch, coefficients modulated
+// per-user by the Phase 13 tolerance traits — heterogeneity measured in P17), the away-time
+// fatigue decay, the probabilistic exit logit (4.8), and the session-utility lambdas (4.9).
+// Classification thresholds that no experiment varies stay named constants at their definition
+// (D24). Defaults are the shipped operating point, calibrated so the Phase 16 statistical tests
+// pass at TDD-default data settings; tests must not assert these exact values.
+struct SessionDynamicsConfig {
+    // Fatigue modulation weights (V2 TDD 4.7 example formula).
+    double topicFatigueWeight = 0.6;   // alpha
+    double creatorFatigueWeight = 0.4; // beta
+    double noveltyMatchWeight = 0.3;   // gamma
+    // Per-impression fatigue accumulation scales (package A documents the exact increments).
+    double topicFatigueIncrement = 0.12;
+    double creatorFatigueIncrement = 0.10;
+    double generalFatigueScale = 1.0; // multiplies the latent fatigueDelta contribution
+    // Away-time decay: fatigue halves every this many simulated seconds away (V2 TDD 4.7).
+    double awayDecayHalfLifeSeconds = 3600.0;
+    // Exit logit (V2 TDD 4.8): P(exit) = sigma(b0 + b1*fatigue + b2*recentRegret +
+    // b3*consecutivePoorReels - b4*recentSatisfaction + b5*externalInterruption).
+    double exitBias = -3.6;              // b0 (baseline exit hazard per impression)
+    double exitFatigueWeight = 2.2;      // b1
+    double exitRegretWeight = 1.6;       // b2
+    double exitPoorStreakWeight = 0.30;  // b3
+    double exitSatisfactionWeight = 1.4; // b4
+    double exitInterruptionWeight = 6.0; // b5 (an interruption almost always ends the session)
+    // Per-impression external-interruption hazard (independent stream, V2 TDD 4.8).
+    double externalInterruptionHazard = 0.006;
+    // Session-utility lambdas (V2 TDD 4.9): U_s = satSum - l1*regretSum - l2*harmfulFatigue -
+    // l3*earlyFailureExit.
+    double regretLambda = 1.0;      // l1
+    double fatigueLambda = 0.5;     // l2
+    double failureExitLambda = 2.0; // l3
+    bool operator==(const SessionDynamicsConfig &) const = default;
+};
+
 // Evaluation-harness parameters (TDD 19 / phase-4 task 5). The oracle exhaustively scores all
 // reels by true hidden affinity, so it runs only on a Bernoulli-sampled subset of requests; the
 // rate is config-driven and recorded in every experiment's output.
@@ -326,6 +369,7 @@ struct ExperimentConfig {
     DriftConfig drift;
     BehaviourConfig behaviour;
     BehaviourV2Config behaviourV2;
+    SessionDynamicsConfig sessionDynamics;
     RewardConfig reward;
     EvaluationConfig evaluation;
     RealismConfig realism;
@@ -363,6 +407,8 @@ void to_json(nlohmann::json &j, const RealismConfig &c);
 void from_json(const nlohmann::json &j, RealismConfig &c);
 void to_json(nlohmann::json &j, const BehaviourV2Config &c);
 void from_json(const nlohmann::json &j, BehaviourV2Config &c);
+void to_json(nlohmann::json &j, const SessionDynamicsConfig &c);
+void from_json(const nlohmann::json &j, SessionDynamicsConfig &c);
 void to_json(nlohmann::json &j, const RecommendationAlgorithm &a);
 void from_json(const nlohmann::json &j, RecommendationAlgorithm &a);
 void to_json(nlohmann::json &j, const ExperimentConfig &c);

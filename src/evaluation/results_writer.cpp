@@ -161,6 +161,34 @@ const char *kMetricGroupsNote =
     "engagement additions in this block are the ONLY new engagement numbers; the existing V1 "
     "engagement files/columns are unchanged (D22).";
 
+const char *kSessionHealthNote =
+    "Session-health group (Phase 16, V2 TDD §4.9/§6). Present only under realism.session_dynamics "
+    "(which requires latent_reactions). Session length is an OUTCOME of feed quality: the harness "
+    "consumes each feed impression-by-impression and STOPS when a probabilistic classified exit "
+    "fires (V2 TDD 4.8), collecting one COMPLETED SessionRecord per exit through the D18 "
+    "EVALUATION "
+    "CARVE-OUT (SessionRecord's hidden-derived satisfaction/regret/harmful-fatigue never reach a "
+    "recommender-visible structure). All means/rates here are over CLOSED sessions; a session "
+    "still "
+    "open when the simulation ends is a RunEnded record, counted in open_sessions and EXCLUDED "
+    "from "
+    "every mean/rate/share denominator (it is not a real exit). satisfaction_per_minute / "
+    "regret_per_minute divide by SESSION-DURATION minutes (time before exit / 60) — deliberately "
+    "distinct from the hidden-welfare group's WATCH-minute denominator. mean_session_utility is "
+    "U_s = Σsatisfaction − λ1·Σregret − λ2·harmfulFatigue − λ3·[failure exit] (λs from "
+    "session_dynamics config), recomputed on the eval side from the record components. "
+    "early_failure_exit_rate / natural_completion_rate are the Failure / Satisfied shares of "
+    "closed "
+    "sessions; exit_type_shares gives the full V2 §4.8 taxonomy distribution. "
+    "next_session_starting_satisfaction is the §4.9 measure: mean carry-over satisfaction of "
+    "sessions that followed an earlier session of the same user (consecutive records linked per "
+    "user). harmful_fatigue_mean also realizes the hidden-welfare group's previously-placeholder "
+    "harmful_fatigue column under this gate. Per-round rows are in session_health.csv; all values "
+    "are deterministic. NOTE (integrator): the scaffold provides no run-end drain hook, so open "
+    "sessions are not yet collected as RunEnded records — open_sessions is 0 until package A's "
+    "exit "
+    "model / a drain hook lands; the reduction already handles RunEnded correctly.";
+
 // p50/p95/p99/mean/max/samples of a LatencyStats as a JSON object (wall-clock, D9).
 nlohmann::json latencyJson(const LatencyStats &l) {
     return nlohmann::json{{"p50", l.p50Ms},   {"p95", l.p95Ms}, {"p99", l.p99Ms},
@@ -315,23 +343,64 @@ void ResultsWriter::writeSummaryJson(const ExperimentResult &result) {
                                 {"mean_immediate_satisfaction", a.meanSatisfaction},
                                 {"mean_regret", a.meanRegret}});
         }
-        j["welfare"] = {
-            {"impressions", w.impressions},
-            {"mean_immediate_satisfaction", w.meanSatisfaction},
-            {"mean_regret", w.meanRegret},
-            {"satisfaction_per_minute", w.satisfactionPerMinute},
-            {"watch_minutes", w.watchMinutes},
-            {"harmful_fatigue", w.harmfulFatigue},
-            {"platform_trust", w.platformTrust},
-            {"not_yet_modeled", nlohmann::json::array({"harmful_fatigue", "platform_trust"})},
-            {"archetype_exposure", exposure},
-            {"note", kWelfareNote}};
+        // harmful_fatigue is a NOT-YET-MODELED placeholder UNTIL Phase 16: under
+        // realism.session_dynamics it is realized from session data (the mean end-of-session
+        // harmful fatigue, filled by the runner from the session-health report), so it drops out of
+        // not_yet_modeled and gains a source note. Gated on sessionHealth.configured so a P15-only
+        // run (latent_reactions on, session_dynamics off) is byte-identical to before (D17).
+        const bool harmfulFatigueModeled = result.sessionHealth.configured;
+        const nlohmann::json notYetModeled =
+            harmfulFatigueModeled ? nlohmann::json::array({"platform_trust"})
+                                  : nlohmann::json::array({"harmful_fatigue", "platform_trust"});
+        j["welfare"] = {{"impressions", w.impressions},
+                        {"mean_immediate_satisfaction", w.meanSatisfaction},
+                        {"mean_regret", w.meanRegret},
+                        {"satisfaction_per_minute", w.satisfactionPerMinute},
+                        {"watch_minutes", w.watchMinutes},
+                        {"harmful_fatigue", w.harmfulFatigue},
+                        {"platform_trust", w.platformTrust},
+                        {"not_yet_modeled", notYetModeled},
+                        {"archetype_exposure", exposure},
+                        {"note", kWelfareNote}};
+        if (harmfulFatigueModeled) {
+            j["welfare"]["harmful_fatigue_source"] =
+                "Phase 16 (realism.session_dynamics): mean end-of-session harmful fatigue over "
+                "closed sessions (see the session_health block / session_health.csv) — no longer a "
+                "placeholder under this gate.";
+        }
 
         // Four-group index (V2 §6, D22): a single gate-on block documenting the four groups and
         // carrying the engagement group's V2 additions (comment/save/profile-visit rates from the
-        // overall MetricsSummary). recommendation-quality/session-health point at the existing V1
-        // fields; session-health is flagged LIMITED pre-P16. NO aggregate score anywhere.
+        // overall MetricsSummary). recommendation-quality points at the existing V1 fields. The
+        // session-health group is LIMITED pre-P16 (V1 session-length only); under
+        // realism.session_dynamics it becomes LIVE and points at the session_health block/CSV. The
+        // else-branch is byte-for-byte the pre-Phase-16 object so a P15-only run is unchanged
+        // (D17). NO aggregate score anywhere.
         const MetricsSummary &ov = result.overall;
+        nlohmann::json sessionHealthGroup;
+        if (result.sessionHealth.configured) {
+            sessionHealthGroup = {
+                {"status", "live"},
+                {"see", "session_health{} block + session_health.csv"},
+                {"available",
+                 {"session_count", "time_before_exit_mean", "time_before_exit_median",
+                  "mean_impressions_per_session", "satisfaction_per_minute", "regret_per_minute",
+                  "mean_session_utility", "early_failure_exit_rate", "natural_completion_rate",
+                  "next_session_starting_satisfaction", "exit_type_shares",
+                  "harmful_fatigue_mean"}},
+                {"pending", {"return_delay", "sessions_per_day", "retention"}}};
+        } else {
+            sessionHealthGroup = {
+                {"status", "limited_pre_p16"},
+                {"available", {"mean_session_length", "reward_per_session"}},
+                {"pending",
+                 {"early_failure_exit_rate", "natural_exit_rate", "return_delay",
+                  "sessions_per_day", "retention"}},
+                {"note",
+                 "Session-health group is LIMITED before Phase 16: only the V1 session-length "
+                 "/ reward-per-session numbers exist. Probabilistic classified exits, "
+                 "early-failure-exit rate, return delay and retention arrive in P16/P20."}};
+        }
         j["metric_groups"] = {
             {"note", kMetricGroupsNote},
             {"engagement",
@@ -342,21 +411,49 @@ void ResultsWriter::writeSummaryJson(const ExperimentResult &result) {
               {"profile_visit_rate", ov.profileVisitRate}}},
             {"hidden_user_welfare",
              {{"see", "welfare{} block + welfare_metrics.csv + welfare_archetype_metrics.csv"}}},
-            {
-                "session_health",
-                {{"status", "limited_pre_p16"},
-                 {"available", {"mean_session_length", "reward_per_session"}},
-                 {"pending",
-                  {"early_failure_exit_rate", "natural_exit_rate", "return_delay",
-                   "sessions_per_day", "retention"}},
-                 {"note",
-                  "Session-health group is LIMITED before Phase 16: only the V1 session-length "
-                  "/ reward-per-session numbers exist. Probabilistic classified exits, "
-                  "early-failure-exit rate, return delay and retention arrive in P16/P20."}},
-            },
+            {"session_health", sessionHealthGroup},
             {"recommendation_quality",
              {{"see", "diversity{} block + metrics.mean_true_affinity + "
                       "learning.final_estimated_hidden_cosine"}}}};
+    }
+
+    // Session-health block (Phase 16, V2 TDD §4.9/§6, D22): PRESENT only under
+    // realism.session_dynamics, so a P15-only or gate-off run's summary.json carries no
+    // `session_health` key (byte-identical to a pre-Phase-16 run's non-timing content, D17).
+    // Overall session statistics + the exit-type distribution (counts + shares); RunEnded is
+    // reported as open_sessions and excluded from every share/rate denominator (see the note).
+    if (result.sessionHealth.configured) {
+        const SessionHealthReport &s = result.sessionHealth;
+        j["session_health"] = {
+            {"sessions", s.sessions},
+            {"open_sessions", s.openSessions},
+            {"mean_duration_seconds", s.meanDurationSeconds},
+            {"median_duration_seconds", s.medianDurationSeconds},
+            {"mean_impressions_per_session", s.meanImpressions},
+            {"duration_minutes", s.durationMinutes},
+            {"satisfaction_per_minute", s.satisfactionPerMinute},
+            {"regret_per_minute", s.regretPerMinute},
+            {"mean_session_utility", s.meanSessionUtility},
+            {"early_failure_exit_rate", s.earlyFailureExitRate},
+            {"natural_completion_rate", s.naturalCompletionRate},
+            {"harmful_fatigue_mean", s.harmfulFatigueMean},
+            {"next_session_starting_satisfaction", s.nextSessionStartingSatisfaction},
+            {"linked_sessions", s.linkedSessions},
+            {"exit_type_counts",
+             {{"failure", s.exits.failure},
+              {"satisfied", s.exits.satisfied},
+              {"fatigue", s.exits.fatigue},
+              {"external", s.exits.external},
+              {"regret", s.exits.regret},
+              {"run_ended", s.exits.runEnded}}},
+            {"exit_type_shares",
+             {{"failure", s.exitShare(SessionExitType::Failure)},
+              {"satisfied", s.exitShare(SessionExitType::Satisfied)},
+              {"fatigue", s.exitShare(SessionExitType::Fatigue)},
+              {"external", s.exitShare(SessionExitType::External)},
+              {"regret", s.exitShare(SessionExitType::Regret)},
+              {"open", s.openShare()}}},
+            {"note", kSessionHealthNote}};
     }
 
     j["notes"] = {{"learning", result.learningEnabled ? kLearningEnabledNote : kLearningFrozenNote},
@@ -545,6 +642,31 @@ void ResultsWriter::writeWelfareArchetypeMetricsCsv(const ExperimentResult &resu
     }
 }
 
+void ResultsWriter::writeSessionHealthMetricsCsv(const ExperimentResult &result) {
+    // Session-health group, per round (Phase 16, V2 TDD §4.9/§6). Written ONLY under
+    // realism.session_dynamics. One row per round: the round's CLOSED-session statistics + U_s +
+    // exit-type counts. All means/rates are over CLOSED sessions; RunEnded (open) sessions appear
+    // only in open_sessions. Deterministic (num() fixed precision, classic locale): byte-identical
+    // across same-seed runs. Under the P16 scaffold stub the loop closes zero sessions, so every
+    // row is a well-formed zero row.
+    std::ofstream csv(result.directory / "session_health.csv");
+    csv << "round,sessions,open_sessions,mean_duration_seconds,median_duration_seconds,"
+           "mean_impressions,satisfaction_per_minute,regret_per_minute,mean_session_utility,"
+           "early_failure_exit_rate,natural_completion_rate,harmful_fatigue_mean,"
+           "next_session_starting_satisfaction,failure_exits,satisfied_exits,fatigue_exits,"
+           "external_exits,regret_exits\n";
+    for (const SessionHealthRoundPoint &p : result.sessionHealth.byRound) {
+        csv << p.round << ',' << p.sessions << ',' << p.openSessions << ','
+            << num(p.meanDurationSeconds) << ',' << num(p.medianDurationSeconds) << ','
+            << num(p.meanImpressions) << ',' << num(p.satisfactionPerMinute) << ','
+            << num(p.regretPerMinute) << ',' << num(p.meanSessionUtility) << ','
+            << num(p.earlyFailureExitRate) << ',' << num(p.naturalCompletionRate) << ','
+            << num(p.harmfulFatigueMean) << ',' << num(p.nextSessionStartingSatisfaction) << ','
+            << p.exits.failure << ',' << p.exits.satisfied << ',' << p.exits.fatigue << ','
+            << p.exits.external << ',' << p.exits.regret << '\n';
+    }
+}
+
 void ResultsWriter::writeAll(const ExperimentResult &result, const RunMetadata &meta) {
     writeConfigJson(result);
     writeSummaryJson(result);
@@ -568,6 +690,12 @@ void ResultsWriter::writeAll(const ExperimentResult &result, const RunMetadata &
     if (result.welfare.configured) {
         writeWelfareMetricsCsv(result);
         writeWelfareArchetypeMetricsCsv(result);
+    }
+    // Phase 16 session-health file (V2 TDD §4.9/§6): written ONLY under realism.session_dynamics,
+    // so a P15-only or gate-off run's output directory carries no session_health.csv and every
+    // EXISTING file (incl. the P15 welfare CSVs) is byte-identical (D17).
+    if (result.sessionHealth.configured) {
+        writeSessionHealthMetricsCsv(result);
     }
     writeMetadataJson(result.directory, meta);
 }
