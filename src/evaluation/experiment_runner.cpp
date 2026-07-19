@@ -19,6 +19,7 @@
 #include "rr/domain/user.hpp"
 #include "rr/evaluation/cold_start.hpp"
 #include "rr/evaluation/diversity_metrics.hpp"
+#include "rr/evaluation/event_driven_runner.hpp"
 #include "rr/evaluation/oracle.hpp"
 #include "rr/evaluation/oracle_satisfaction_recommender.hpp"
 #include "rr/evaluation/results_writer.hpp"
@@ -69,6 +70,12 @@ ExperimentRunner::ExperimentRunner(ExperimentConfig config, std::filesystem::pat
       provenance_(std::move(provenance)) {}
 
 ExperimentResult ExperimentRunner::run() {
+    // Phase 18 (D20): the event-queue scheduler dispatches to the EventDrivenRunner; the legacy
+    // round-robin loop below is retained permanently as the default and the D17 golden path.
+    if (config_.simulation.scheduler == "event_queue") {
+        EventDrivenRunner eventRunner(config_, outputRoot_, provenance_);
+        return eventRunner.run();
+    }
     Stopwatch wall; // total wall time (D9: provenance only, confined to summary.timing).
     const uint64_t seed = config_.simulation.seed;
 

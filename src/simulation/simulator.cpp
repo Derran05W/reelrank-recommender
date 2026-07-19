@@ -570,6 +570,11 @@ StepResult Simulator::step(User &user, const HiddenUserState &hidden, Reel &reel
 
 Timestamp Simulator::now() const { return now_; }
 
+// Phase 18 event-clock bridge: the event-driven runner sets now_ to the popped event's timestamp
+// before stepV2 so away-gaps and start/finish timestamps track event time (see the header). Three
+// lines by design — no other simulator state is touched; the legacy path never calls it.
+void Simulator::syncClock(Timestamp t) { now_ = t; }
+
 std::vector<SessionRecord> Simulator::drainOpenSessions() {
     std::vector<SessionRecord> drained;
     if (!sessionDynamicsEnabled_) {

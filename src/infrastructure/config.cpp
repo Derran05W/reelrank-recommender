@@ -53,14 +53,16 @@ void to_json(json &j, const SimulationConfig &c) {
              {"new_users", c.newUsers},
              {"new_users_at", c.newUsersAt},
              {"new_reels", c.newReels},
-             {"new_reels_at", c.newReelsAt}};
+             {"new_reels_at", c.newReelsAt},
+             {"scheduler", c.scheduler},
+             {"horizon_seconds", c.horizonSeconds}};
 }
 
 void from_json(const json &j, SimulationConfig &c) {
     ensureKnownKeys(j, "simulation",
                     {"seed", "users", "reels", "creators", "topics", "dimensions",
                      "interactions_per_user", "new_users", "new_users_at", "new_reels",
-                     "new_reels_at"});
+                     "new_reels_at", "scheduler", "horizon_seconds"});
     readKey(j, "seed", c.seed);
     readKey(j, "users", c.users);
     readKey(j, "reels", c.reels);
@@ -72,6 +74,15 @@ void from_json(const json &j, SimulationConfig &c) {
     readKey(j, "new_users_at", c.newUsersAt);
     readKey(j, "new_reels", c.newReels);
     readKey(j, "new_reels_at", c.newReelsAt);
+    readKey(j, "scheduler", c.scheduler);
+    readKey(j, "horizon_seconds", c.horizonSeconds);
+    if (c.scheduler != "round_robin" && c.scheduler != "event_queue") {
+        throw std::invalid_argument("simulation.scheduler must be 'round_robin' or 'event_queue'");
+    }
+    if (c.scheduler == "event_queue" && !(c.horizonSeconds > 0.0)) {
+        throw std::invalid_argument(
+            "simulation.horizon_seconds must be > 0 under scheduler='event_queue'");
+    }
 }
 
 void to_json(json &j, const RecommendationConfig &c) {
@@ -544,6 +555,21 @@ void from_json(const json &j, SessionDynamicsConfig &c) {
     readKey(j, "failure_exit_lambda", c.failureExitLambda);
 }
 
+void to_json(json &j, const SchedulingConfig &c) {
+    j = json{{"open_stagger_seconds", c.openStaggerSeconds},
+             {"return_delay_mean_seconds", c.returnDelayMeanSeconds},
+             {"return_delay_spread_rel", c.returnDelaySpreadRel}};
+}
+
+void from_json(const json &j, SchedulingConfig &c) {
+    ensureKnownKeys(
+        j, "scheduling",
+        {"open_stagger_seconds", "return_delay_mean_seconds", "return_delay_spread_rel"});
+    readKey(j, "open_stagger_seconds", c.openStaggerSeconds);
+    readKey(j, "return_delay_mean_seconds", c.returnDelayMeanSeconds);
+    readKey(j, "return_delay_spread_rel", c.returnDelaySpreadRel);
+}
+
 void to_json(json &j, const ExperimentConfig &c) {
     j = json{{"simulation", c.simulation},
              {"recommendation", c.recommendation},
@@ -557,6 +583,7 @@ void to_json(json &j, const ExperimentConfig &c) {
              {"behaviour", c.behaviour},
              {"behaviour_v2", c.behaviourV2},
              {"session_dynamics", c.sessionDynamics},
+             {"scheduling", c.scheduling},
              {"reward", c.reward},
              {"evaluation", c.evaluation},
              {"realism", c.realism}};
@@ -566,7 +593,7 @@ void from_json(const json &j, ExperimentConfig &c) {
     ensureKnownKeys(j, "<top-level>",
                     {"simulation", "recommendation", "algorithm", "hnsw", "ranking", "learning",
                      "exploration", "diversity", "drift", "behaviour", "behaviour_v2",
-                     "session_dynamics", "reward", "evaluation", "realism"});
+                     "session_dynamics", "scheduling", "reward", "evaluation", "realism"});
     readKey(j, "simulation", c.simulation);
     readKey(j, "recommendation", c.recommendation);
     readKey(j, "algorithm", c.algorithm);
@@ -579,6 +606,7 @@ void from_json(const json &j, ExperimentConfig &c) {
     readKey(j, "behaviour", c.behaviour);
     readKey(j, "behaviour_v2", c.behaviourV2);
     readKey(j, "session_dynamics", c.sessionDynamics);
+    readKey(j, "scheduling", c.scheduling);
     readKey(j, "reward", c.reward);
     readKey(j, "evaluation", c.evaluation);
     readKey(j, "realism", c.realism);
@@ -586,6 +614,11 @@ void from_json(const json &j, ExperimentConfig &c) {
     // would need V2 augmentation of injected entities on the injection streams — unsupported
     // until a phase needs it. Fail fast at load rather than silently generating injected
     // entities with default V2 fields.
+    // Phase 18: the event runner schedules exits/returns against the P16 session machinery.
+    if (c.simulation.scheduler == "event_queue" && !c.realism.sessionDynamics) {
+        throw std::invalid_argument(
+            "simulation.scheduler='event_queue' requires realism.session_dynamics");
+    }
     if (c.realism.contentV2 && (c.simulation.newUsers > 0 || c.simulation.newReels > 0)) {
         throw std::invalid_argument("realism.content_v2 does not support mid-simulation "
                                     "injection (simulation.new_users/new_reels) yet");

@@ -189,6 +189,23 @@ const char *kSessionHealthNote =
     "exit "
     "model / a drain hook lands; the reduction already handles RunEnded correctly.";
 
+const char *kEventModeNote =
+    "Event-mode additions (Phase 18, V2 TDD §4.11/4.12/4.14, D20). Present ONLY under "
+    "simulation.scheduler='event_queue'; a round-robin run's summary.json carries no event_mode "
+    "key "
+    "(byte-identical legacy path, D17). Users open/scroll/exit/return on INDEPENDENT timelines "
+    "over "
+    "a deterministic (time, pinned-tie-breaker) priority queue, so per-user interaction counts are "
+    "an OUTCOME (interactions_per_user is ignored). event_log_digest is a pure SplitMix64 fold "
+    "over "
+    "the full event stream in processing order (the D20 'same seed => identical event sequence' "
+    "tripwire; unchanged under user-init/insertion-order permutation). The four §6 groups above "
+    "are "
+    "reported per SIMULATED DAY (86400s). sessions_per_simulated_day = closed sessions / "
+    "simulated_days; mean_concurrent_online is the mean fraction of users online sampled once per "
+    "processed event timestamp; return_delay stats are the baseline model's per-exit draws "
+    "(max(60, gaussian(mean/baselineDailyUsage, spread)) seconds, stream 'scheduling').";
+
 // p50/p95/p99/mean/max/samples of a LatencyStats as a JSON object (wall-clock, D9).
 nlohmann::json latencyJson(const LatencyStats &l) {
     return nlohmann::json{{"p50", l.p50Ms},   {"p95", l.p95Ms}, {"p99", l.p99Ms},
@@ -454,6 +471,27 @@ void ResultsWriter::writeSummaryJson(const ExperimentResult &result) {
               {"regret", s.exitShare(SessionExitType::Regret)},
               {"open", s.openShare()}}},
             {"note", kSessionHealthNote}};
+    }
+
+    // Event-mode block (Phase 18, V2 TDD §4.11/4.12/4.14, D20/D22): PRESENT only under the
+    // event-queue scheduler, so a round-robin run's summary.json carries no `event_mode` key
+    // (byte-identical to the legacy path, D17). Carries the deterministic event-log digest + count
+    // (the D20 tripwire package C golden-tests) and the event-mode session-health additions the
+    // round-robin loop cannot produce (sessions/simulated-day, concurrent-online occupancy, return
+    // delays). Purely additive — appended after every existing block so nothing shifts.
+    if (result.eventMode.configured) {
+        const EventModeReport &em = result.eventMode;
+        j["event_mode"] = {{"scheduler", "event_queue"},
+                           {"event_count", em.eventCount},
+                           {"event_log_digest", em.eventLogDigest},
+                           {"simulated_days", em.simulatedDays},
+                           {"sessions_per_simulated_day", em.sessionsPerSimulatedDay},
+                           {"mean_concurrent_online", em.meanConcurrentOnline},
+                           {"return_delay_seconds",
+                            {{"mean", em.returnDelayMeanSeconds},
+                             {"median", em.returnDelayMedianSeconds},
+                             {"count", em.returnCount}}},
+                           {"note", kEventModeNote}};
     }
 
     j["notes"] = {{"learning", result.learningEnabled ? kLearningEnabledNote : kLearningFrozenNote},

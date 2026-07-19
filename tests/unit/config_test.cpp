@@ -461,6 +461,36 @@ TEST(ConfigTest, CohortMixAndPersonalizedDiversityParamsParse) {
     EXPECT_THROW(bad.get<ExperimentConfig>(), std::invalid_argument);
 }
 
+// --- Realism V2 Phase 18: scheduler + horizon + scheduling block ------------------------------
+
+TEST(ConfigTest, SchedulerValidationAndSchedulingBlock) {
+    ExperimentConfig def;
+    EXPECT_EQ(def.simulation.scheduler, "round_robin");
+    EXPECT_DOUBLE_EQ(def.simulation.horizonSeconds, 0.0);
+    EXPECT_DOUBLE_EQ(def.scheduling.openStaggerSeconds, 43200.0);
+
+    // event_queue requires horizon > 0 AND session_dynamics.
+    json noHorizon = {
+        {"simulation", {{"scheduler", "event_queue"}}},
+        {"realism",
+         {{"content_v2", true}, {"latent_reactions", true}, {"session_dynamics", true}}}};
+    EXPECT_THROW(noHorizon.get<ExperimentConfig>(), std::invalid_argument);
+    json noSessions = {{"simulation", {{"scheduler", "event_queue"}, {"horizon_seconds", 3600.0}}}};
+    EXPECT_THROW(noSessions.get<ExperimentConfig>(), std::invalid_argument);
+    json bogus = {{"simulation", {{"scheduler", "fifo"}}}};
+    EXPECT_THROW(bogus.get<ExperimentConfig>(), std::invalid_argument);
+
+    json ok = {
+        {"simulation", {{"scheduler", "event_queue"}, {"horizon_seconds", 3600.0}}},
+        {"realism", {{"content_v2", true}, {"latent_reactions", true}, {"session_dynamics", true}}},
+        {"scheduling", {{"return_delay_mean_seconds", 7200.0}}}};
+    auto c = ok.get<ExperimentConfig>();
+    EXPECT_EQ(c.simulation.scheduler, "event_queue");
+    EXPECT_DOUBLE_EQ(c.scheduling.returnDelayMeanSeconds, 7200.0);
+    json out = c;
+    EXPECT_EQ(out.get<ExperimentConfig>(), c);
+}
+
 TEST(ConfigTest, BehaviourV2BlockParsesRoundTripsAndRejectsUnknownKeys) {
     ExperimentConfig def;
     EXPECT_DOUBLE_EQ(def.behaviourV2.topicWeight, 1.5);

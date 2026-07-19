@@ -203,6 +203,27 @@ struct AdaptationReport {
 // Phase 14 slice). They remain in scope here via that include, so consumers of this header are
 // unaffected by the move.
 
+// Phase 18 event-mode additions (D20/D22). `configured` is false for the round-robin scheduler, so
+// every field stays inert and NO new summary key is written — round-robin output stays
+// byte-identical (D17 golden is the tripwire). Under simulation.scheduler == "event_queue" the
+// EventDrivenRunner fills it: the deterministic event-log digest + event count (package C's golden
+// tripwire, folded by rr::foldEventLog over the full event stream) plus the event-mode
+// session-health additions the round-robin loop cannot produce — sessions per simulated day, mean
+// concurrent-online occupancy (fraction of users online, sampled once per processed event
+// timestamp), and the baseline return-delay stats. Purely additive: ResultsWriter emits an
+// `event_mode` summary block ONLY when configured, so the round-robin path is untouched.
+struct EventModeReport {
+    bool configured = false;
+    uint64_t eventLogDigest = 0;
+    std::size_t eventCount = 0;
+    double simulatedDays = 0.0;           // config.simulation.horizonSeconds / 86400
+    double sessionsPerSimulatedDay = 0.0; // closed sessions / simulatedDays
+    double meanConcurrentOnline = 0.0;    // mean online fraction over sampled event timestamps
+    double returnDelayMeanSeconds = 0.0;
+    double returnDelayMedianSeconds = 0.0;
+    std::size_t returnCount = 0; // number of baseline return-delay draws (scheduled returns)
+};
+
 // Everything one experiment produced, in memory. The ResultsWriter serializes it to disk; the
 // simulate CLI prints headline lines from it. `directory` is the created <experiment-id> dir.
 struct ExperimentResult {
@@ -296,6 +317,12 @@ struct ExperimentResult {
     // previously-placeholder harmful_fatigue column). The P16 statistical tests and package C's
     // comparison read this in-process.
     SessionHealthReport sessionHealth;
+
+    // Phase 18 event-mode additions (D20/D22). `configured` is false for the round-robin scheduler
+    // (inert, no summary key written — byte-identical, D17); under the event scheduler it carries
+    // the event-log digest + count and the event-mode session-health additions. See
+    // EventModeReport.
+    EventModeReport eventMode;
 };
 
 // Runs the end-to-end evaluation loop (TDD 20 + phase-4 task 4, phase-7 tasks 1/4) from a

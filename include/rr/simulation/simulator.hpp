@@ -168,6 +168,17 @@ class Simulator {
     // Current logical time in simulated seconds (starts at 0).
     Timestamp now() const;
 
+    // Phase 18 event-clock bridge (event_driven_runner.cpp ONLY). In the event-driven scheduler
+    // the queue — not stepV2's internal advance — owns simulated time: users consume reels on
+    // independent, interleaved timelines, so before each stepV2 the runner sets the logical clock
+    // to the popped event's timestamp with this setter. That makes startSession's away-gap
+    // (now - previousSessionEnd) and the impression start/finish timestamps align to event time
+    // rather than to wherever the previous (possibly different-user) step left now_. Additive and
+    // never called on the V1/legacy round-robin path (there stepV2 advances now_ itself, keeping
+    // the golden byte-identical, D17); the value may move backwards relative to another user's more
+    // advanced finish time, which is exactly the point of interleaved concurrency.
+    void syncClock(Timestamp t);
+
   private:
     // Per-user session bookkeeping. The recommender-visible User carries currentSessionLength but
     // not the SessionId, so the Simulator owns the id and the (rng-sampled) target length that

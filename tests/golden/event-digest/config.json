@@ -1,0 +1,39 @@
+{
+  "algorithm": "hnsw_ranker",
+  "simulation": {
+    "seed": 42,
+    "users": 200,
+    "reels": 2000,
+    "creators": 40,
+    "topics": 8,
+    "dimensions": 32,
+    "scheduler": "event_queue",
+    "horizon_seconds": 21600.0
+  },
+  "recommendation": {
+    "feed_size": 5,
+    "vector_candidates": 100,
+    "popular_candidates": 50,
+    "fresh_candidates": 50,
+    "exploration_candidates": 25
+  },
+  "hnsw": {
+    "m": 16,
+    "ef_construction": 200,
+    "ef_search": 64
+  },
+  "evaluation": {
+    "oracle_sample_rate": 0.1,
+    "retrieval_sample_rate": 0.0
+  },
+  "scheduling": {
+    "open_stagger_seconds": 43200.0,
+    "return_delay_mean_seconds": 21600.0,
+    "return_delay_spread_rel": 0.5
+  },
+  "realism": {
+    "content_v2": true,
+    "latent_reactions": true,
+    "session_dynamics": true
+  }
+}

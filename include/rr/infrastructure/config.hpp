@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <string>
 #include <vector>
 
 #include <nlohmann/json_fwd.hpp>
@@ -33,7 +34,31 @@ struct SimulationConfig {
     uint32_t newUsersAt = 0;
     uint32_t newReels = 0;
     uint32_t newReelsAt = 0;
+    // Phase 18 (D20): runner selection. "round_robin" (the default, the legacy ExperimentRunner
+    // loop — the D17 golden path, retained permanently) or "event_queue" (the EventDrivenRunner:
+    // independent per-user timelines over a deterministic priority queue). Validated at load.
+    std::string scheduler = "round_robin";
+    // Phase 18 event-mode horizon: the simulation runs until the queue is exhausted or the
+    // logical clock passes this many simulated seconds (0 under round_robin — ignored there;
+    // event mode REQUIRES > 0, validated at load). Per-user interaction counts become an
+    // OUTCOME in event mode; interactions_per_user is ignored there (documented).
+    double horizonSeconds = 0.0;
     bool operator==(const SimulationConfig &) const = default;
+};
+
+// Phase 18 event-scheduling surface (V2 TDD 4.12; consumed only under
+// simulation.scheduler == "event_queue", stream "scheduling" D19). Baseline models — the
+// satisfaction-coupled retention arrives in P20.
+struct SchedulingConfig {
+    // Initial OpenApp times are staggered uniformly over [0, open_stagger_seconds).
+    double openStaggerSeconds = 43200.0; // 12 simulated hours
+    // Baseline return-delay model: after an exit, the user returns after
+    // max(60, gaussian(mean/baselineDailyUsage-scaled, spread)) seconds. Package A documents the
+    // exact formula; the per-user mean divides by the P13 baselineDailyUsage trait via the
+    // documented mapping so heavy users return sooner.
+    double returnDelayMeanSeconds = 21600.0; // 6 simulated hours at baselineDailyUsage == 1
+    double returnDelaySpreadRel = 0.5;       // relative gaussian spread
+    bool operator==(const SchedulingConfig &) const = default;
 };
 
 struct RecommendationConfig {
@@ -393,6 +418,7 @@ struct ExperimentConfig {
     BehaviourConfig behaviour;
     BehaviourV2Config behaviourV2;
     SessionDynamicsConfig sessionDynamics;
+    SchedulingConfig scheduling;
     RewardConfig reward;
     EvaluationConfig evaluation;
     RealismConfig realism;
@@ -432,6 +458,8 @@ void to_json(nlohmann::json &j, const BehaviourV2Config &c);
 void from_json(const nlohmann::json &j, BehaviourV2Config &c);
 void to_json(nlohmann::json &j, const SessionDynamicsConfig &c);
 void from_json(const nlohmann::json &j, SessionDynamicsConfig &c);
+void to_json(nlohmann::json &j, const SchedulingConfig &c);
+void from_json(const nlohmann::json &j, SchedulingConfig &c);
 void to_json(nlohmann::json &j, const RecommendationAlgorithm &a);
 void from_json(const nlohmann::json &j, RecommendationAlgorithm &a);
 void to_json(nlohmann::json &j, const ExperimentConfig &c);

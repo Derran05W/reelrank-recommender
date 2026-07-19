@@ -1,0 +1,10 @@
+# ReelRank Phase 18 event-log digest golden (D20).
+#
+# Harvested by scripts/check_event_digest.py --regenerate from an event-mode run of
+# tests/golden/event-digest/config.json. Deterministic function of (config, seed); a change
+# here means the event sequence changed (a cross-commit/cross-platform determinism break)
+# unless the config or the runner was intentionally, reviewably changed. See README.md.
+#
+# Format: "key=value" lines; blank lines and '#' comments ignored.
+event_log_digest=1533553118870293663
+event_count=5602
