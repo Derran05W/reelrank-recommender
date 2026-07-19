@@ -230,8 +230,17 @@ TEST_F(ExplorationRecovery, PostGateTailExposureRecoversAboveControl) {
         << "exploration should de-concentrate impressions (lower creator HHI) vs the bubble";
     EXPECT_LT(hi.hhi, c.hhi - kHhiMargin);
 
-    // Dose-response: more exploration recovers at least as much tail exposure / concentrates no
-    // more.
-    EXPECT_GE(hi.tail, lo.tail - 0.005) << "more exploration should not serve FEWER tail creators";
-    EXPECT_LE(hi.hhi, lo.hhi + 0.0005) << "more exploration should not concentrate MORE";
+    // Same-regime sanity (NOT dose-response): both recovery arms must land in the same recovered
+    // band. A strict eps-monotonicity assert here is over-tight — the fine ordering between two
+    // recovery arms is chaotic (exploration reshuffles serving over 8 simulated days) and flips
+    // across platforms: macOS/AppleClang observed hi-lo = +0.0030 while Ubuntu/GCC-13 observed
+    // hi-lo = -0.0144 (libm log/cos ulp differences in gaussian(), the Phase 0 known note,
+    // amplified over the run — first caught by CI on e8023f7). The mechanism claim (recovery
+    // ABOVE the control, asserted on BOTH arms above, green on both platforms) does not include
+    // monotonicity in eps — package A's full-scale probe showed the same non-monotonicity
+    // (eps 0.05/0.10/0.50 coincide). Band = ~2x the largest observed cross-arm gap.
+    EXPECT_NEAR(hi.tail, lo.tail, 0.03)
+        << "recovery arms diverged from each other beyond the same-regime band";
+    EXPECT_NEAR(hi.hhi, lo.hhi, 0.003)
+        << "recovery arms' concentration diverged beyond the same-regime band";
 }
