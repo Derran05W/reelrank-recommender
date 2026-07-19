@@ -40,7 +40,9 @@ double clamp01(double v) { return std::clamp(v, 0.0, 1.0); }
 // topic (plan task (d)). An exit after a repetitive window forces it to 0 (plan "exit-after-
 // repetition"); the caller passes repTopic so this stays a pure function of observables.
 double computeSat(const InteractionEvent &e, double repTopic) {
-    double sat;
+    // Defensive init: the switch below covers every InteractionType enumerator, but GCC's
+    // -Wmaybe-uninitialized cannot prove enum exhaustiveness (CI ubuntu arms build with GCC).
+    double sat = 0.0;
     switch (e.type) {
     case InteractionType::CompleteWatch:
     case InteractionType::Rewatch:
