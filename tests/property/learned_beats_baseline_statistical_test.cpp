@@ -89,8 +89,10 @@ Dataset LearnedVsBaseline::ds_;
 
 TEST_F(LearnedVsBaseline, BinaryTargetsBeatFrequencyBaselines_UserDisjoint) {
     const Split split = assignSplit(ds_, SplitMode::UserDisjoint);
-    for (const std::string &target :
-         {"completed", "liked", "shared", "session_exit", "not_interested"}) {
+    // Plain const char* loop var: a `const std::string &` here binds to a temporary constructed
+    // per element, which GCC promotes to an error via -Wrange-loop-construct (the recurring
+    // GCC-only warning class; Clang accepts it).
+    for (const char *target : {"completed", "liked", "shared", "session_exit", "not_interested"}) {
         const TargetResult r =
             trainAndEvaluateTarget(ds_, split, *findTarget(target), hp(), SplitMode::UserDisjoint);
         ASSERT_FALSE(r.skipped) << target << ": " << r.skipReason;
