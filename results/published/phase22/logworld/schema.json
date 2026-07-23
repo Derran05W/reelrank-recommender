@@ -1,0 +1,121 @@
+{
+  "config": {
+    "log_max_rows_per_file": 2000000,
+    "log_pool_sample_rate": 0.01,
+    "log_sample_rate": 0.25,
+    "survey": {
+      "enabled": true,
+      "noise_sd": 0.35,
+      "sample_rate": 0.02
+    },
+    "training_log": true
+  },
+  "feature_columns": [
+    "similarity",
+    "session_topic",
+    "quality",
+    "freshness",
+    "popularity",
+    "trending",
+    "creator_affinity",
+    "exploration",
+    "duration_match",
+    "repetition",
+    "impression_count",
+    "visual_match",
+    "music_match",
+    "emotional_match",
+    "clickbait",
+    "emotional_intensity",
+    "usefulness",
+    "production_quality",
+    "information_density",
+    "language_match",
+    "save_popularity"
+  ],
+  "file_layout": {
+    "candidates": "candidates-partNNNN.csv",
+    "max_rows_per_part": 2000000,
+    "outcomes": "outcomes-partNNNN.csv",
+    "part_start_index": 0,
+    "requests": "requests.csv",
+    "survey": "survey.csv"
+  },
+  "hidden_derived_tables": [
+    "survey"
+  ],
+  "sampling": {
+    "log_pool_sample_salt": 5928220678570331980,
+    "log_sample_salt": 5928220678620206926,
+    "predicate": "pinnedHash01(request_id ^ salt) < rate"
+  },
+  "schema_version": 1,
+  "tables": {
+    "candidates": [
+      "request_id",
+      "reel_id",
+      "pool_rank",
+      "shown",
+      "position",
+      "served_score",
+      "exploration_flag",
+      "retrieval_sources",
+      "retrieval_similarity",
+      "similarity",
+      "session_topic",
+      "quality",
+      "freshness",
+      "popularity",
+      "trending",
+      "creator_affinity",
+      "exploration",
+      "duration_match",
+      "repetition",
+      "impression_count",
+      "visual_match",
+      "music_match",
+      "emotional_match",
+      "clickbait",
+      "emotional_intensity",
+      "usefulness",
+      "production_quality",
+      "information_density",
+      "language_match",
+      "save_popularity"
+    ],
+    "outcomes": [
+      "request_id",
+      "reel_id",
+      "position",
+      "watch_seconds",
+      "watch_ratio",
+      "completed",
+      "liked",
+      "shared",
+      "followed",
+      "not_interested",
+      "commented",
+      "saved",
+      "profile_visited",
+      "observed_exit_after_impression"
+    ],
+    "requests": [
+      "request_id",
+      "user_id",
+      "session_id",
+      "timestamp",
+      "feed_size",
+      "effective_epsilon",
+      "pool_size",
+      "shown_count",
+      "pool_logged"
+    ],
+    "survey": [
+      "user_id",
+      "reel_id",
+      "request_id",
+      "timestamp",
+      "likert"
+    ]
+  }
+}

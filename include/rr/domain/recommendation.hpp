@@ -11,6 +11,12 @@
 
 namespace rr {
 
+// Phase 22 (contracts §7): served-time ranking-capture sink, defined in
+// recommendation/orchestrator.hpp (the recommender layer). Forward-declared here so
+// RecommendationRequest can carry an OPTIONAL pointer to it without domain/ depending on the
+// recommender FeatureExtractor. See RankingCapture for the emission contract.
+struct RankingCapture;
+
 // TDD 8.6.
 struct RecommendationRequest {
     UserId userId;
@@ -23,6 +29,15 @@ struct RecommendationRequest {
     bool enableDiversity;
 
     Timestamp requestTime;
+
+    // Phase 22 training-log feature capture (contracts §7). When non-null (set only by the event
+    // runner during a `learning_v2.training_log` run, and only for SAMPLED requests), the
+    // Orchestrator fills `*capture` with the served-time pool + per-candidate FeatureVectors +
+    // served scores + retrieval provenance for the TrainingLogger. nullptr (the default, every
+    // pre-Phase-22 call site) => the Orchestrator does ZERO extra work and the run is
+    // byte-identical (D17). The pointer is non-owning; the runner owns the sink for the recommend()
+    // call.
+    RankingCapture *capture = nullptr;
 };
 
 // TDD 8.7.

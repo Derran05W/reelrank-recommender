@@ -43,6 +43,7 @@ target_compile_options(rr_warnings INTERFACE -Wall -Wextra -Wpedantic -Werror)
 # --- rr_core: infrastructure + core (never links or includes vector-db, per D2) -------------
 add_library(rr_core STATIC
     src/core/embedding.cpp
+    src/core/pinned_hash.cpp
     src/domain/serialization.cpp
     src/infrastructure/archetype_config.cpp
     src/infrastructure/cohort_config.cpp
@@ -86,15 +87,28 @@ target_include_directories(rr_recommend PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(rr_recommend PUBLIC rr_vindex)
 target_link_libraries(rr_recommend PRIVATE rr_warnings)
 
+# --- rr_learning_v2: Phase 22 Tier-5 offline-learning pipeline — the training-data LOGGER
+# (src/learning_v2/training_logger.cpp) and package B's in-house SGD learners + CSV training-data
+# reader. A NON-carve-out library barred from simulation/hidden/ by the D18 include-graph guard
+# (its scanned roots include learning_v2). Never links vector-db (D2); rr_core carries config +
+# the pinned hash + nlohmann. -----------------------------------------------------------------
+file(GLOB RR_LEARNING_V2_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_SOURCE_DIR}/src/learning_v2/*.cpp)
+add_library(rr_learning_v2 STATIC ${RR_LEARNING_V2_SOURCES})
+target_include_directories(rr_learning_v2 PUBLIC ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(rr_learning_v2 PUBLIC rr_core)
+target_link_libraries(rr_learning_v2 PRIVATE rr_warnings)
+
 # --- rr_evaluation: experiment runner, metrics, oracle regret, results writer (Phase 4). The
 # only library allowed to read HiddenUserState outside the simulator (TDD 18.2 evaluation
-# carve-out). ---------------------------------------------------------------------------------
+# carve-out). Phase 22: the event runner drives the training LOGGER (rr_learning_v2) and this
+# library owns the survey writer (evaluation carve-out). -------------------------------------
 file(GLOB RR_EVALUATION_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_SOURCE_DIR}/src/evaluation/*.cpp)
 add_library(rr_evaluation STATIC ${RR_EVALUATION_SOURCES})
 target_include_directories(rr_evaluation PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(rr_evaluation PUBLIC rr_recommend rr_simulation)
-target_link_libraries(rr_evaluation PRIVATE rr_warnings)
+target_link_libraries(rr_evaluation PRIVATE rr_learning_v2 rr_warnings)
 
 add_subdirectory(apps)
 

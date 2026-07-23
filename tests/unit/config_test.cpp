@@ -225,6 +225,73 @@ TEST(ConfigTest, EcosystemMetricsRequiresEventQueue) {
     EXPECT_TRUE(c.evaluation.ecosystemMetrics);
 }
 
+TEST(ConfigTest, LearningV2Defaults) {
+    // Phase 22 (contracts §1): the whole learning_v2 block is inert by default so every existing
+    // run is byte-identical (D17).
+    const ExperimentConfig c{};
+    EXPECT_FALSE(c.learningV2.trainingLog);
+    EXPECT_DOUBLE_EQ(c.learningV2.logSampleRate, 0.25);
+    EXPECT_DOUBLE_EQ(c.learningV2.logPoolSampleRate, 0.01);
+    EXPECT_EQ(c.learningV2.logMaxRowsPerFile, 2000000ULL);
+    EXPECT_FALSE(c.learningV2.survey.enabled);
+    EXPECT_DOUBLE_EQ(c.learningV2.survey.sampleRate, 0.02);
+    EXPECT_DOUBLE_EQ(c.learningV2.survey.noiseSd, 0.35);
+}
+
+TEST(ConfigTest, LearningV2ParsesRoundTripsAndRequiresEventQueue) {
+    // Phase 22 (contracts §1): training_log logs the event-driven world only, and the survey table
+    // is written from the same event-runner hook — both are rejected under round_robin (fail-fast,
+    // D10), matching every sibling event-only gate.
+    json badLog = {{"learning_v2", {{"training_log", true}}}};
+    try {
+        badLog.get<ExperimentConfig>();
+        FAIL() << "expected throw";
+    } catch (const std::invalid_argument &e) {
+        const std::string msg = e.what();
+        EXPECT_NE(msg.find("training_log"), std::string::npos);
+        EXPECT_NE(msg.find("event_queue"), std::string::npos);
+    }
+    json badSurvey = {{"learning_v2", {{"survey", {{"enabled", true}}}}}};
+    try {
+        badSurvey.get<ExperimentConfig>();
+        FAIL() << "expected throw";
+    } catch (const std::invalid_argument &e) {
+        const std::string msg = e.what();
+        EXPECT_NE(msg.find("survey"), std::string::npos);
+        EXPECT_NE(msg.find("event_queue"), std::string::npos);
+    }
+
+    // Unknown keys are rejected in both the block and its nested survey sub-block.
+    json badKey = {{"learning_v2", {{"log_sample_rat", 0.5}}}};
+    EXPECT_THROW(badKey.get<ExperimentConfig>(), std::invalid_argument);
+    json badSurveyKey = {{"learning_v2", {{"survey", {{"enabld", true}}}}}};
+    EXPECT_THROW(badSurveyKey.get<ExperimentConfig>(), std::invalid_argument);
+
+    // On under a valid event_queue stack: parses and round-trips through to_json/from_json.
+    json ok = {
+        {"simulation", {{"scheduler", "event_queue"}, {"horizon_seconds", 86400.0}}},
+        {"realism", {{"content_v2", true}, {"latent_reactions", true}, {"session_dynamics", true}}},
+        {"learning_v2",
+         {{"training_log", true},
+          {"log_sample_rate", 0.5},
+          {"log_pool_sample_rate", 0.02},
+          {"log_max_rows_per_file", 1000},
+          {"survey", {{"enabled", true}, {"sample_rate", 0.1}, {"noise_sd", 0.5}}}}}};
+    auto c = ok.get<ExperimentConfig>();
+    EXPECT_TRUE(c.learningV2.trainingLog);
+    EXPECT_DOUBLE_EQ(c.learningV2.logSampleRate, 0.5);
+    EXPECT_DOUBLE_EQ(c.learningV2.logPoolSampleRate, 0.02);
+    EXPECT_EQ(c.learningV2.logMaxRowsPerFile, 1000ULL);
+    EXPECT_TRUE(c.learningV2.survey.enabled);
+    EXPECT_DOUBLE_EQ(c.learningV2.survey.sampleRate, 0.1);
+    EXPECT_DOUBLE_EQ(c.learningV2.survey.noiseSd, 0.5);
+    json out = c;
+    EXPECT_EQ(out.get<ExperimentConfig>(), c);
+    EXPECT_TRUE(out["learning_v2"]["training_log"].get<bool>());
+    EXPECT_EQ(out["learning_v2"]["log_max_rows_per_file"].get<uint64_t>(), 1000ULL);
+    EXPECT_TRUE(out["learning_v2"]["survey"]["enabled"].get<bool>());
+}
+
 TEST(ConfigTest, ExplorationEnableAtDayAndDescriptionRoundTrip) {
     // Phase 21 (contracts §1/§4): both default to their inert values and round-trip additively.
     EXPECT_DOUBLE_EQ(ExperimentConfig{}.exploration.enableAtDay, -1.0);

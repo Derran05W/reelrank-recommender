@@ -6,12 +6,16 @@ recommender side must never reach one of those headers, even transitively: this 
 quoted-include graph of every file under the recommender-side roots
 
     include/rr/recommendation  include/rr/candidate_sources  include/rr/learning
+    include/rr/learning_v2
     src/recommendation         src/candidate_sources         src/learning
+    src/learning_v2
 
 and exits non-zero, printing the offending include chain, if any of them reaches a header whose
-repo-relative path contains "simulation/hidden/". Evaluation modules are deliberately NOT
-scanned: they are the documented carve-out (metrics and explicitly-labeled oracle arms may read
-hidden state, D18).
+repo-relative path contains "simulation/hidden/". Phase 22 added the learning_v2 roots: the
+training LOGGER is a NON-carve-out module (it must see only recommender-visible / observable
+inputs), so it is structurally barred from hidden state here. Evaluation modules are deliberately
+NOT scanned: they are the documented carve-out (metrics and explicitly-labeled oracle arms — incl.
+the Phase 22 survey writer in src/evaluation/ — may read hidden state, D18).
 
 Usage: check_hidden_isolation.py <repo-root>
 """
@@ -26,9 +30,11 @@ FORBIDDEN_ROOTS = [
     "include/rr/recommendation",
     "include/rr/candidate_sources",
     "include/rr/learning",
+    "include/rr/learning_v2",
     "src/recommendation",
     "src/candidate_sources",
     "src/learning",
+    "src/learning_v2",
 ]
 
 HIDDEN_MARKER = "simulation/hidden/"

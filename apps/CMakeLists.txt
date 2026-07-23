@@ -42,6 +42,13 @@ target_compile_definitions(benchmark_recommender PRIVATE
 add_executable(concurrency_check concurrency_check.cpp)
 target_link_libraries(concurrency_check PRIVATE rr_vindex Threads::Threads rr_warnings)
 
+# train_models — Phase 22 offline learner CLI (contracts §5, D21). SCAFFOLD STUB: the target is
+# reserved so package B's worktree needs no CMake edit; B replaces train_models.cpp's body with the
+# real trainer. Links rr_learning_v2 (the SGD learners + CSV training-data reader B lands there,
+# PUBLIC-linking rr_core for config/random/nlohmann). D2 containment holds: no vector-db header.
+add_executable(train_models train_models.cpp)
+target_link_libraries(train_models PRIVATE rr_learning_v2 rr_warnings)
+
 # simulate — end-to-end evaluation harness CLI (Phase 4, task 6). Links rr_evaluation (which
 # PUBLIC-links rr_recommend + rr_simulation). D2 containment holds: no vector-db header here —
 # vectors are reached through the rr:: adapters. Provenance/build facts baked in for metadata.json.

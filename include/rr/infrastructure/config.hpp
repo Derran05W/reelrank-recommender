@@ -448,6 +448,39 @@ struct RetentionConfig {
     bool operator==(const RetentionConfig &) const = default;
 };
 
+// Explicit-feedback survey sub-block of learning_v2 (V2 TDD 4.19, Phase 22, contracts §1). Emits
+// the ONLY hidden-derived training table (survey.csv): a sampled, Likert-quantized noisy
+// immediateSatisfaction. OFF by default. When enabled it DRAWS on the D19-pinned
+// "explicit-feedback" stream — exactly two draws per surveyed impression (rate bernoulli + gaussian
+// noise), zero when disabled — so it never perturbs the V1 behaviour streams.
+struct LearningV2SurveyConfig {
+    bool enabled = false;
+    double sampleRate = 0.02; // fraction of shown impressions that receive a survey draw
+    double noiseSd = 0.35;    // gaussian noise sd added to immediateSatisfaction before quantizing
+    bool operator==(const LearningV2SurveyConfig &) const = default;
+};
+
+// Tier-5 learned-ranking pipeline gates (V2 TDD 4.19/4.22, Phase 22, contracts §1). All defaults
+// preserve current behaviour: the whole block is inert until training_log (or survey.enabled) is
+// turned on, and BOTH require the event runner (P22 logs the event-driven world only, V2 §9).
+// SAMPLING DRAWS NO RNG — request selection is the pinned SplitMix64 hash
+// pinnedHash01(requestId ^ salt) < rate (the two salts in learning_v2/training_log_schema.hpp), so
+// enabling logging does not perturb any simulation stream (golden-tripwired, D19).
+struct LearningV2Config {
+    // Master gate for the impression-logging pipeline. Load-validation: requires
+    // simulation.scheduler == "event_queue".
+    bool trainingLog = false;
+    // Fraction of REQUESTS whose SHOWN impressions are logged (features + outcomes join).
+    double logSampleRate = 0.25;
+    // Fraction of requests whose FULL RANKED POOL is logged (§4.22 eligibility/position-bias
+    // support; ~500 rows per sampled request).
+    double logPoolSampleRate = 0.01;
+    // Rotation threshold for candidates/outcomes part files (`-partNNNN.csv`).
+    uint64_t logMaxRowsPerFile = 2000000;
+    LearningV2SurveyConfig survey;
+    bool operator==(const LearningV2Config &) const = default;
+};
+
 // Evaluation-harness parameters (TDD 19 / phase-4 task 5). The oracle exhaustively scores all
 // reels by true hidden affinity, so it runs only on a Bernoulli-sampled subset of requests; the
 // rate is config-driven and recorded in every experiment's output.
@@ -500,6 +533,7 @@ struct ExperimentConfig {
     ServingConfig serving;
     EvolutionConfig evolution;
     RetentionConfig retention;
+    LearningV2Config learningV2;
     RewardConfig reward;
     EvaluationConfig evaluation;
     RealismConfig realism;
@@ -553,6 +587,10 @@ void to_json(nlohmann::json &j, const EvolutionConfig &c);
 void from_json(const nlohmann::json &j, EvolutionConfig &c);
 void to_json(nlohmann::json &j, const RetentionConfig &c);
 void from_json(const nlohmann::json &j, RetentionConfig &c);
+void to_json(nlohmann::json &j, const LearningV2SurveyConfig &c);
+void from_json(const nlohmann::json &j, LearningV2SurveyConfig &c);
+void to_json(nlohmann::json &j, const LearningV2Config &c);
+void from_json(const nlohmann::json &j, LearningV2Config &c);
 void to_json(nlohmann::json &j, const RecommendationAlgorithm &a);
 void from_json(const nlohmann::json &j, RecommendationAlgorithm &a);
 void to_json(nlohmann::json &j, const ExperimentConfig &c);

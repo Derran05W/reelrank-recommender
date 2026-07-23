@@ -5,16 +5,56 @@
 #include <vector>
 
 #include "rr/domain/candidate.hpp"
+#include "rr/domain/ids.hpp"
 #include "rr/domain/recommendation.hpp"
 #include "rr/domain/reel.hpp"
 #include "rr/domain/user.hpp"
 #include "rr/recommendation/candidate_generator.hpp"
+#include "rr/recommendation/feature_extractor.hpp"
 #include "rr/recommendation/ranker.hpp"
 
 namespace rr {
 
 class ExplorationCandidateSource;
 class Reranker;
+
+// ================================================================================================
+// Phase 22 SERVED-TIME RANKING CAPTURE (contracts docs/design/P22-CONTRACTS.md §7). The additive,
+// zero-cost-when-off surface the TrainingLogger consumes: the Orchestrator fills a RankingCapture
+// (via RecommendationRequest::capture) with one row per FULL-POOL candidate, best-first, carrying
+// the exact served-time signals the log needs — pool rank, served score, exploration provenance,
+// retrieval-source union, retrieval similarity, and the per-candidate FeatureVector.
+//
+// The FeatureVectors are NOT recomputed post-hoc from a different world: the Orchestrator runs the
+// runner-supplied `extractor` on the SAME served pool (same reel set, same request time) the ranker
+// scored, and because FeatureExtractor is a pure, deterministic function of (reels, RankingConfig,
+// contentV2, user, pool, now) — and every pool-relative feature (popularity min-max, pool prior) is
+// set-invariant — the captured vectors are BYTE-IDENTICAL to the ones the WeightedRanker computed
+// internally. The runner builds `extractor` with the SAME (reels, config.ranking,
+// realism.contentV2) the recommender's own ranker used, so the equality holds for every ranked
+// recommender.
+// ================================================================================================
+struct RankingCaptureRow {
+    ReelId reelId;
+    std::size_t poolRank; // 0-based rank in the full served pool (best-first, post-exploration-
+                          // guarantee on the ranked path; retrieval-similarity order on identity)
+    float servedScore; // the ranker's rankingScore (ranked path) / retrievalSimilarity (identity)
+    bool explorationLabeled; // representative source == Exploration (matches the served exploration
+                             // feature + the guaranteed-slot rule — one signal, cannot disagree)
+    float retrievalSimilarity;
+    std::vector<CandidateSource> sources; // FULL merged retrieval-source union, first-seen order
+    FeatureVector features;               // served-time features (see the equality argument above)
+};
+
+struct RankingCapture {
+    // INPUT (runner-set): the served-time feature extractor to run on the pool. Built by the runner
+    // with the SAME reels + RankingConfig + contentV2 as the recommender's ranker, so features are
+    // byte-identical to the served ones. When null the Orchestrator captures nothing (the pointer
+    // on the request is the on/off flag; this is a belt-and-braces second guard).
+    const FeatureExtractor *extractor = nullptr;
+    // OUTPUT (Orchestrator-filled): one row per full-pool candidate, in poolRank order.
+    std::vector<RankingCaptureRow> rows;
+};
 
 // TDD 7 / 13: the recommendation orchestrator. Given a fixed set of candidate sources it runs
 // them, merges + deduplicates their output (preserving all source labels), drops ineligible

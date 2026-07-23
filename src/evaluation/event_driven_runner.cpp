@@ -31,12 +31,16 @@
 #include "rr/evaluation/results_writer.hpp"
 #include "rr/evaluation/retrieval_evaluator.hpp"
 #include "rr/evaluation/session_health_metrics.hpp"
+#include "rr/evaluation/survey_writer.hpp"
 #include "rr/evaluation/welfare_metrics.hpp"
 #include "rr/infrastructure/clock.hpp"
 #include "rr/infrastructure/random.hpp"
 #include "rr/learning/online_user_state_updater.hpp"
 #include "rr/learning/tolerance_estimator.hpp"
+#include "rr/learning_v2/training_logger.hpp"
 #include "rr/recommendation/effective_preference.hpp"
+#include "rr/recommendation/feature_extractor.hpp"
+#include "rr/recommendation/orchestrator.hpp"
 #include "rr/recommendation/recommender.hpp"
 #include "rr/recommendation/recommender_factory.hpp"
 #include "rr/recommendation/vector_index.hpp"
@@ -351,12 +355,53 @@ ExperimentResult EventDrivenRunner::run() {
         retention.emplace(config_.retention);
     }
 
+    // Phase 22 (contracts §8): the training-data LOGGER + explicit-feedback SURVEY writer,
+    // constructed ONLY when their gate is on (else never — a gates-off run makes ZERO new calls and
+    // is byte-identical, D17). Both STREAM files under <run-dir>/training_log/ during the loop, so
+    // the run directory is resolved HERE, before the event loop, rather than at result assembly;
+    // the wall-clock experimentTimestamp() is therefore drawn exactly ONCE and reused by
+    // result.experimentId/directory below (moving that draw earlier changes no CSV content — the
+    // stamp only names the dir, already per-run-variable and wildcard-matched by the goldens). The
+    // logger is the D18-guarded NON-carve-out module (rr_learning_v2); the survey writer is the
+    // evaluation carve-out (reads latent immediateSatisfaction). Scaffold: the ingest methods are
+    // no-op stubs (package A fills the bodies + the orchestrator feature capture); finish() writes
+    // schema.json for real.
+    const std::string experimentId = std::string(toString(config_.algorithm)) + "-seed" +
+                                     std::to_string(seed) + "-" + experimentTimestamp();
+    const std::filesystem::path runDir = outputRoot_ / experimentId;
+    std::optional<TrainingLogger> trainingLogger;
+    // Served-time feature capture (contracts §7): the extractor is built with the SAME (reels,
+    // ranking config, contentV2) every ranked recommender hands its OWN FeatureExtractor, so the
+    // captured pool features are byte-identical to the served ones. It needs the dataset's reels,
+    // so it is emplaced just after generateDataset() below; declared here to live for the whole
+    // run. Constructed only under the training-log gate — off, it never exists and recommend() is
+    // untouched.
+    std::optional<FeatureExtractor> captureExtractor;
+    if (config_.learningV2.trainingLog) {
+        trainingLogger.emplace(config_.learningV2, runDir);
+    }
+    std::optional<SurveyWriter> surveyWriter;
+    // D19 "explicit-feedback" stream (contracts §1): forked (and drawn) ONLY when the survey is on,
+    // so a survey-off run makes ZERO draws on it and the V1 streams stay byte-identical. forkRng
+    // derives it independently by name, so adding it never perturbs any other stream.
+    std::optional<Rng> explicitFeedbackRng;
+    if (config_.learningV2.survey.enabled) {
+        surveyWriter.emplace(config_.learningV2, runDir);
+        explicitFeedbackRng.emplace(forkRng(seed, "explicit-feedback"));
+    }
+
     // 1. Dataset + FROZEN cold-start prior — identical to the legacy runner (TDD 11.1). Mid-run
     //    injection is BLOCKED under content_v2 (the P13 config guard) and event mode requires the
     //    full stack, so ReelPublished is reserved/no-op this phase (documented at its dispatch).
     GeneratedDataset ds = generateDataset(config_.simulation, config_.realism, seed);
     const Embedding coldStartPrior = globalAveragePreference(ds.hiddenStates);
     applyColdStart(ds.users, coldStartPrior);
+    // Now that the dataset's (immutable, D2) reels exist, build the served-time capture extractor
+    // (contracts §7); its reel reference stays valid for the whole run (no mid-run injection in
+    // event mode). Gate-guarded, so gate-off runs never construct it.
+    if (trainingLogger) {
+        captureExtractor.emplace(ds.reels, config_.ranking, config_.realism.contentV2);
+    }
 
     // Stream-neutral post-step appliers, constructed exactly as the legacy runner.
     const OnlineUserStateUpdater updater(ds.reels, config_.learning, config_.realism.contentV2);
@@ -697,6 +742,12 @@ ExperimentResult EventDrivenRunner::run() {
         case EventType::RequestFeed: {
             outstandingRequest[u] = false; // this pending request is now being served (task 2)
             const bool wasEmpty = tl.prefetchedFeed.empty();
+            // This request's id (== InteractionEvent::requestId for the impressions it produces, so
+            // the training log's requests/candidates/outcomes join). Advanced BEFORE recommend() so
+            // the pinned rng-free sampling predicate and the feature-capture setup can key on it;
+            // no read of requestCount occurs between here and its former post-recommend() ++ site,
+            // so this move is byte-identical (only reads are the stamp below and result assembly).
+            ++requestCount;
 
             RecommendationRequest req{};
             req.userId = user.id;
@@ -709,13 +760,30 @@ ExperimentResult EventDrivenRunner::run() {
             req.enableDiversity = config_.diversity.enabled;
             req.requestTime = e.time;
 
+            // Phase 22 feature capture (contracts §7): for a SAMPLED logging request (shown- OR
+            // pool-sample; both pinned, rng-free), point the request at a capture sink so
+            // recommend() surfaces the served pool + FeatureVectors. Only sampled requests pay the
+            // capture cost; an unsampled OR gate-off request leaves req.capture null, so the
+            // recommend path is byte-identical (D17). The logger recomputes the SAME predicate, so
+            // the two never disagree on which requests are logged.
+            RankingCapture capture;
+            const bool logThisRequest =
+                trainingLogger &&
+                (learning_v2::logSampleSelected(requestCount, learning_v2::kLogSampleSalt,
+                                                config_.learningV2.logSampleRate) ||
+                 learning_v2::logSampleSelected(requestCount, learning_v2::kLogPoolSampleSalt,
+                                                config_.learningV2.logPoolSampleRate));
+            if (logThisRequest) {
+                capture.extractor = &*captureExtractor;
+                req.capture = &capture;
+            }
+
             Stopwatch sw; // time ONLY recommend() (D9 wall-clock carve-out).
             RecommendationResponse resp = recommender->recommend(req);
             latencies.push_back(sw.elapsedMs());
             retrievalLatencies.push_back(resp.retrievalLatencyMs);
             rankingLatencies.push_back(resp.rankingLatencyMs);
             rerankingLatencies.push_back(resp.rerankingLatencyMs);
-            ++requestCount;
 
             // Cost instrumentation (task 4): candidatesRanked is the pool the orchestrator actually
             // scored for this request. Summed across requests it is the "ranking computations" cost
@@ -760,6 +828,27 @@ ExperimentResult EventDrivenRunner::run() {
                 acc.distErrorSum += rs.distanceError;
             }
 
+            // P22-HOOK(ranking) — contracts §3 "after ranking: features + pool + shown capture".
+            // For a SAMPLED logging request, recommend() has filled `capture` with the served pool
+            // + per-candidate FeatureVectors + scores + provenance (contracts §7); `req`/`user` are
+            // the request + observable user and `resp.reels` the shown feed with positions.
+            // `effEpsilon` is the exploration probability actually in effect this request (0 when
+            // exploration is off, or strictly before its enable-at-day gate — the SAME time gate
+            // the exploration source applies via request time, replicated here for the log's §4.22
+            // exploration- probability column). Gate-off / unsampled requests make no call, so the
+            // run is byte-identical (D17).
+            if (logThisRequest) {
+                double effEpsilon = 0.0;
+                if (config_.exploration.enabled) {
+                    const double enableAtDay = config_.exploration.enableAtDay;
+                    const bool gated =
+                        enableAtDay >= 0.0 &&
+                        std::floor(static_cast<double>(e.time) / 86400.0) < enableAtDay;
+                    effEpsilon = gated ? 0.0 : config_.exploration.epsilon;
+                }
+                trainingLogger->onRequestRanked(requestCount, req, user, effEpsilon, capture,
+                                                resp.reels);
+            }
             // Land the ranked feed in the deque. PRESERVE-DOWNLOADED (V2 §4.13, the default): a
             // threshold refill APPENDS behind whatever survives, so already-downloaded reels are
             // kept (the realistic client cache); the surviving items keep their OWN older stamps.
@@ -962,6 +1051,28 @@ ExperimentResult EventDrivenRunner::run() {
             s.sessionId = step.event.sessionId.value;
             metrics.add(dayIdx, s);
             ++impressionCount;
+
+            // P22-HOOK(outcome) — contracts §3 "after each impression's InteractionEvent: outcome
+            // append". `step.event` is the finalized observable InteractionEvent (watch_seconds,
+            // watch_ratio, commented, saved, profile_visited, observed_exit_after_impression + the
+            // requestId/position it joins on); the completed/liked/shared/followed/not_interested
+            // labels are NOT on the event (its single `type` is lossy for simultaneous signals) —
+            // they live on `step.outcome`, so the logger joins the two. The logger filters to
+            // SHOWN-sampled impressions via the pinned predicate, so gate-off / unsampled
+            // impressions are no-ops.
+            if (trainingLogger) {
+                trainingLogger->onImpressionOutcome(step.event, step.outcome);
+            }
+            // Explicit-feedback survey (contracts §1, D19): the evaluation carve-out reads the
+            // latent immediateSatisfaction and makes EXACTLY TWO draws on the "explicit-feedback"
+            // stream per SHOWN impression (rate bernoulli + noise gaussian), zero when disabled.
+            // Called for every impression so the draw count stays impression-aligned; a row is
+            // written only when the sample draw fires.
+            if (surveyWriter) {
+                surveyWriter->maybeSurvey(user.id, step.event.reelId, step.event.requestId,
+                                          step.event.timestamp, latent.immediateSatisfaction,
+                                          *explicitFeedbackRng);
+            }
 
             // LOG-ONLY facets: FinishReel then Interaction at the SAME timestamp, sharing this
             // StartReel's perUserSeq (the EventType distinguishes their tie-breakers). The handling
@@ -1229,9 +1340,8 @@ ExperimentResult EventDrivenRunner::run() {
     ExperimentResult result;
     result.config = config_;
     result.seed = seed;
-    result.experimentId = std::string(toString(config_.algorithm)) + "-seed" +
-                          std::to_string(seed) + "-" + experimentTimestamp();
-    result.directory = outputRoot_ / result.experimentId;
+    result.experimentId = experimentId; // Phase 22: resolved once, before the event loop
+    result.directory = runDir;          // (so the training-log dir and this match exactly)
     result.userCount = userCount;
     result.reelCount = ds.reels.size();
     result.requestCount = requestCount;
@@ -1785,6 +1895,18 @@ ExperimentResult EventDrivenRunner::run() {
             [](const ResultsWriter::HiddenPreferenceFinalRow &a,
                const ResultsWriter::HiddenPreferenceFinalRow &b) { return a.userId < b.userId; });
         ResultsWriter::writeHiddenPreferenceFinalCsv(result.directory, rows);
+    }
+
+    // P22-HOOK(finish) — contracts §3 "run end: flush + schema.json". The run directory
+    // (result.directory == runDir) exists by now, so the loggers write <run-dir>/training_log/.
+    // Gate-off both optionals are empty => no calls => byte-identical. Scaffold: finish() writes
+    // schema.json for real (making the gate-on smoke meaningful); package A adds the buffered-CSV
+    // flush + the survey.csv writer.
+    if (trainingLogger) {
+        trainingLogger->finish();
+    }
+    if (surveyWriter) {
+        surveyWriter->finish();
     }
 
     return result;

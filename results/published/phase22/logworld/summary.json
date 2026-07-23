@@ -1,0 +1,288 @@
+{
+  "algorithm": "hnsw_ranker",
+  "counts": {
+    "impressions": 440616,
+    "reels": 100000,
+    "requests": 112407,
+    "rounds": 10,
+    "sessions": 111529,
+    "users": 10000
+  },
+  "diversity": {
+    "feeds": 112407,
+    "mean_creator_hhi": 0.10879464802012087,
+    "mean_intra_list_similarity": 0.7206401094784951,
+    "mean_topic_hhi": 0.7236922967430871,
+    "mean_unique_creators": 9.596332968587365,
+    "mean_unique_topics": 2.0885709964681913,
+    "note": "Per-feed diversity (Phase 9, TDD 18.4), measured on EVERY request (unsampled: a feedSize-10 feed is 45 dot products) from the feed AS PRESENTED, before its impressions are stepped, so the seen-set is the pre-feed state. unique_topics/creators = distinct primaryTopic/creatorId counts; intra_list_similarity = mean pairwise embedding cosine (0 for feeds with <2 items); topic_hhi/creator_hhi = Herfindahl-Hirschman index over topic/creator shares (sum of squared shares: 1.0 = one topic, 1/k = uniform over k distinct). repetition_rate = fraction of feed items that were shown to the user earlier this run OR duplicated within the feed - expected 0 by construction (the orchestrator seen-filters and de-duplicates), published as live verification of the 'duplicate/repetitive content eliminated' exit criterion. The per-round curve is in diversity_metrics.csv; all values are deterministic. This is measured for ANY algorithm (diversity.enabled does not change existing feeds), so the numbers are the phase-comparison baseline.",
+    "repetition_rate": 0.0,
+    "repetition_total": 0
+  },
+  "event_mode": {
+    "event_count": 1657308,
+    "event_log_digest": 5470374366022664245,
+    "mean_concurrent_online": 0.0016229356297582061,
+    "note": "Event-mode additions (Phase 18, V2 TDD §4.11/4.12/4.14, D20). Present ONLY under simulation.scheduler='event_queue'; a round-robin run's summary.json carries no event_mode key (byte-identical legacy path, D17). Users open/scroll/exit/return on INDEPENDENT timelines over a deterministic (time, pinned-tie-breaker) priority queue, so per-user interaction counts are an OUTCOME (interactions_per_user is ignored). event_log_digest is a pure SplitMix64 fold over the full event stream in processing order (the D20 'same seed => identical event sequence' tripwire; unchanged under user-init/insertion-order permutation). The four §6 groups above are reported per SIMULATED DAY (86400s). sessions_per_simulated_day = closed sessions / simulated_days; mean_concurrent_online is the mean fraction of users online sampled once per processed event timestamp; return_delay stats are the baseline model's per-exit draws (max(60, gaussian(mean/baselineDailyUsage, spread)) seconds, stream 'scheduling').",
+    "return_delay_seconds": {
+      "count": 109852,
+      "mean": 71523.48533481412,
+      "median": 35288.0
+    },
+    "scheduler": "event_queue",
+    "serving": {
+      "feed_invalidations": 0,
+      "feed_requests": 112407,
+      "invalidate_on_intent_change": false,
+      "mean_staleness": 1.9700782540806507,
+      "note": "Serving strategy + cost/staleness group (Phase 19, V2 TDD §4.13, D22). Event-mode only; the freshness-versus-cost axis. prefetch_depth is the EFFECTIVE reels ranked per feed request (prefetch_depth 0 resolves to recommendation.feed_size); a deeper cache means fewer requests. Requests fire from consumption: a feed is re-requested when remaining inventory <= refill_threshold (0 = refill-when-empty, the P18 depth-1 default), preserving already-downloaded reels (an appended cache) unless invalidate_on_intent_change drops the remainder on a session-intent swing (cos(current sessionPreference, ranked-time sessionPreference) < intent_swing_cosine_threshold — a purely OBSERVABLE signal; scheduled drift is caught via the same swing it induces, D18). ranking_computations = Σ candidatesRanked over all requests (the COST). staleness of an impression = updater applications on that user between its feed's ranking and its serving; stale_impression_rate = fraction with staleness>0; mean_staleness is over all impressions. satisfaction_lost_before_refresh = Σ over stale impressions of max(0, that-day's fresh-serving mean immediate satisfaction − the stale impression's satisfaction), clamped >=0 (a day with no fresh impressions contributes 0). adaptation_delay (present only when drift is configured) is P10-style but on hidden satisfaction, in per-user interactions: for each drifted-cohort user the interactions from their drift (the scheduler's first atInteraction) until their trailing-10 mean satisfaction recovers to 0.9x its pre-drift trailing-10 mean; mean/median over users that recovered within the horizon (non-recoverers counted in drifted_users, excluded from the means). Per-day rows in serving_metrics.csv. Default serving (prefetch_depth 0, refill_threshold 0, invalidate off) leaves the event stream — and the digest — byte-identical to P18.",
+      "prefetch_depth": 10,
+      "ranking_computations": 56203500,
+      "refill_threshold": 0,
+      "satisfaction_lost_before_refresh": 151677.6648176241,
+      "stale_impression_rate": 0.744886704068849,
+      "stale_impressions": 328209
+    },
+    "sessions_per_simulated_day": 12391.666666666666,
+    "simulated_days": 9.0
+  },
+  "experiment_id": "hnsw_ranker-seed42-20260723T162344",
+  "learning": {
+    "enabled": true,
+    "final_estimated_hidden_cosine": 0.0449687259199105,
+    "note": "Online preference learning is ENABLED (Phase 7, TDD 8.3/11.2/11.3): every user starts at the cold-start global-average estimate (TDD 11.1) and the OnlineUserStateUpdater updates the long-term/session/estimated preference vectors after each interaction. learning_curve.csv's mean_estimated_hidden_cosine should trend up as estimates converge toward the hidden preference."
+  },
+  "long_term": {
+    "churn_rate": 0.16720000000000002,
+    "mean_churn_probability": 0.05769340076396717,
+    "mean_final_habit": 0.08138079356858702,
+    "mean_final_preference_entropy": 2.8499111294132824,
+    "mean_final_trust": 0.012091404729709118,
+    "mean_preference_shift_from_initial": 0.04536758851454166,
+    "note": "Long-term metrics group (Phase 20, V2 TDD §4.15-4.17/§6, D22). Present ONLY when a P20 gate (realism.preference_evolution || retention.enabled) is on; a run with both gates off carries no `long_term` block and no longterm_metrics.csv (byte-identical to a pre-Phase-20 run, D17). retention_1d/retention_7d = fraction of users with >=1 session STARTING within 1/7 simulated days after the end of the day containing their first session; sessions_per_user_per_day and satisfaction_weighted_retention (sum_u retained7d_u*max(0,mean session satisfaction_u) / sum_u max(0,...)) summarize engagement health; churn_rate = churned users / users (churned once a computed next-return delay exceeds retention.churn_delay_threshold_seconds); mean_churn_probability is the model-implied churn at run end; mean_final_trust/mean_final_habit are population means of the hidden retention state; mean_preference_shift_from_initial = mean_u (1 - cos(semantic p_u(0), p_u(T))) is the WITHIN-WORLD preference drift and mean_final_preference_entropy the interest spread. Per-day rows are in longterm_metrics.csv. COUNTERFACTUAL-DISTORTION METHOD (the headline policy-influence number, exit criterion 1; computed by package C's tooling, NOT in-run): run the SAME config+seed twice, once with realism.preference_evolution=false (the counterfactual world), and take per-user distortion = 1 - cos(sem_final_on, sem_final_off) between MATCHED user rows of the two runs' hidden_preference_final.csv. The in-run mean_preference_shift_from_initial is the within-world view; the cross-run distortion is the headline. All non-timing fields are deterministic.",
+    "retention_1d": 0.8012,
+    "retention_7d": 0.9944,
+    "retention_configured": true,
+    "satisfaction_weighted_retention": 0.982869120032587,
+    "sessions_per_user_per_day": 1.2391666666666667
+  },
+  "metric_groups": {
+    "engagement": {
+      "comment_rate": 0.1741334858470868,
+      "profile_visit_rate": 0.25372433139059863,
+      "save_rate": 0.22692094703778345,
+      "v1_fields": "metrics{} block + recommendation_metrics.csv (watch/completion/like/share/follow)"
+    },
+    "hidden_user_welfare": {
+      "see": "welfare{} block + welfare_metrics.csv + welfare_archetype_metrics.csv"
+    },
+    "note": "V2 TDD §6 defines FOUR metric groups reported as SEPARATE blocks; NO single aggregate score is ever defined (D22) — a policy may improve one group while damaging another. (1) engagement: the V1 metrics{} block (watch/completion/like/share/follow) + recommendation_metrics.csv, extended here with the V2 comment/save/profile-visit rates. (2) hidden_user_welfare: the welfare{} block + welfare_metrics.csv + welfare_archetype_metrics.csv (this run's welfare group). (3) session_health: LIMITED before Phase 16 — only session length / reward-per-session exist so far; probabilistic classified exits, early-failure-exit rate, return delay and retention arrive in P16/P20. (4) recommendation_quality: the diversity{} block + metrics.mean_true_affinity + learning.final_estimated_hidden_cosine (V1 §18.2/18.4). The engagement additions in this block are the ONLY new engagement numbers; the existing V1 engagement files/columns are unchanged (D22).",
+    "recommendation_quality": {
+      "see": "diversity{} block + metrics.mean_true_affinity + learning.final_estimated_hidden_cosine"
+    },
+    "session_health": {
+      "available": [
+        "session_count",
+        "time_before_exit_mean",
+        "time_before_exit_median",
+        "mean_impressions_per_session",
+        "satisfaction_per_minute",
+        "regret_per_minute",
+        "mean_session_utility",
+        "early_failure_exit_rate",
+        "natural_completion_rate",
+        "next_session_starting_satisfaction",
+        "exit_type_shares",
+        "harmful_fatigue_mean"
+      ],
+      "pending": [
+        "return_delay",
+        "sessions_per_day",
+        "retention"
+      ],
+      "see": "session_health{} block + session_health.csv",
+      "status": "live"
+    }
+  },
+  "metrics": {
+    "completion_rate": 0.8758170379650307,
+    "follow_rate": 0.01523321894801823,
+    "instant_skip_rate": 0.09699829329847305,
+    "like_rate": 0.21165595439112514,
+    "mean_session_length": 3.9506854719400337,
+    "mean_true_affinity": 0.07767507599034662,
+    "mean_watch_ratio": 1.5560350428585144,
+    "mean_watch_seconds": 19.47222714128721,
+    "reward_per_impression": 0.39856428995015897,
+    "reward_per_session": 1.574602149940188,
+    "share_rate": 0.07608666049349093
+  },
+  "notes": {
+    "baseline_flags": "Requests set enableExploration = exploration.enabled (config-driven since Phase 8) and enableDiversity = diversity.enabled (config-driven since Phase 9). No existing recommender reads either flag, so both are inert for every non-exploration / non-diversity algorithm - the sibling orchestrator's gates are their only readers. candidateLimit = recommendation.vectorCandidates; requestTime = simulator logical clock; sessionId = the most recent interaction's session (SessionId{0} before any interaction).",
+    "learning": "Online preference learning is ENABLED (Phase 7, TDD 8.3/11.2/11.3): every user starts at the cold-start global-average estimate (TDD 11.1) and the OnlineUserStateUpdater updates the long-term/session/estimated preference vectors after each interaction. learning_curve.csv's mean_estimated_hidden_cosine should trend up as estimates converge toward the hidden preference."
+  },
+  "oracle": {
+    "cumulative_regret": 1557.5694053696643,
+    "mean_regret": 0.7038271149433639,
+    "regret_units_note": "Regret is measured in TRUE-AFFINITY units, not reward units: simulating counterfactual oracle interactions would consume behaviour rng draws and perturb determinism (D8), so the oracle compares mean true affinity of its exhaustive top-k against the recommended feed. Affinity is the monotone core of the reward (TDD 10.1/10.5).",
+    "sample_rate": 0.02,
+    "sampled_requests": 2213
+  },
+  "retrieval": {
+    "applicable": true,
+    "mean_distance_error": 0.0074364574592841095,
+    "note": "Live retrieval quality (TDD 18.1) on a Bernoulli(retrieval_sample_rate) subset of requests: the recommender's ANN index is compared against an exact ground-truth index over the active reels for the same query, at k=50. Recall@K = |ANN_K intersect Exact_K| / min(K, corpus); Recall@10 uses the first 10 results. Distance error is the mean positionwise |d_ann,i - d_exact,i| over the first 10 results. Values are deterministic (exact searches). For an exact recommender this measures exactly recall 1.0 / distance error 0.0 (a wiring self-check).",
+    "recall_at_10": 0.7542882020026122,
+    "recall_at_50": 0.6793295602960382,
+    "sample_rate": 0.02,
+    "sampled_requests": 2297
+  },
+  "seed": 42,
+  "session_health": {
+    "duration_minutes": 153859.18333333332,
+    "early_failure_exit_rate": 0.5427392961219457,
+    "exit_type_counts": {
+      "external": 2640,
+      "failure": 60529,
+      "fatigue": 43349,
+      "regret": 33,
+      "run_ended": 4,
+      "satisfied": 4974
+    },
+    "exit_type_shares": {
+      "external": 0.02367182246133154,
+      "failure": 0.5427392961219457,
+      "fatigue": 0.38869311813494734,
+      "open": 3.586511131633925e-05,
+      "regret": 0.00029589778076664425,
+      "satisfied": 0.044599865501008744
+    },
+    "harmful_fatigue_mean": 0.31150494758763725,
+    "linked_sessions": 101529,
+    "mean_duration_seconds": 82.77561981618472,
+    "mean_impressions_per_session": 3.950773369199731,
+    "mean_session_utility": -2.8329640782267997,
+    "median_duration_seconds": 62.0,
+    "natural_completion_rate": 0.044599865501008744,
+    "next_session_starting_satisfaction": -0.028773543639056296,
+    "note": "Session-health group (Phase 16, V2 TDD §4.9/§6). Present only under realism.session_dynamics (which requires latent_reactions). Session length is an OUTCOME of feed quality: the harness consumes each feed impression-by-impression and STOPS when a probabilistic classified exit fires (V2 TDD 4.8), collecting one COMPLETED SessionRecord per exit through the D18 EVALUATION CARVE-OUT (SessionRecord's hidden-derived satisfaction/regret/harmful-fatigue never reach a recommender-visible structure). All means/rates here are over CLOSED sessions; a session still open when the simulation ends is a RunEnded record, counted in open_sessions and EXCLUDED from every mean/rate/share denominator (it is not a real exit). satisfaction_per_minute / regret_per_minute divide by SESSION-DURATION minutes (time before exit / 60) — deliberately distinct from the hidden-welfare group's WATCH-minute denominator. mean_session_utility is U_s = Σsatisfaction − λ1·Σregret − λ2·harmfulFatigue − λ3·[failure exit] (λs from session_dynamics config), recomputed on the eval side from the record components. early_failure_exit_rate / natural_completion_rate are the Failure / Satisfied shares of closed sessions; exit_type_shares gives the full V2 §4.8 taxonomy distribution. next_session_starting_satisfaction is the §4.9 measure: mean carry-over satisfaction of sessions that followed an earlier session of the same user (consecutive records linked per user). harmful_fatigue_mean also realizes the hidden-welfare group's previously-placeholder harmful_fatigue column under this gate. Per-round rows are in session_health.csv; all values are deterministic. NOTE (integrator): the scaffold provides no run-end drain hook, so open sessions are not yet collected as RunEnded records — open_sessions is 0 until package A's exit model / a drain hook lands; the reduction already handles RunEnded correctly.",
+    "open_sessions": 4,
+    "regret_per_minute": 0.30167887626275974,
+    "satisfaction_per_minute": -0.8520905662787257,
+    "sessions": 111525
+  },
+  "timing": {
+    "ranking_latency_ms": {
+      "max": 5.145875,
+      "mean": 0.4150542614605829,
+      "p50": 0.419584,
+      "p95": 0.490667,
+      "p99": 0.5599554800000001,
+      "samples": 112407
+    },
+    "recommend_latency_ms": {
+      "max": 13.844042,
+      "mean": 2.8703958364158746,
+      "p50": 2.883625,
+      "p95": 3.2952787,
+      "p99": 3.941254500000001,
+      "samples": 112407
+    },
+    "reranking_latency_ms": {
+      "max": 7.388833,
+      "mean": 0.02648283648704421,
+      "p50": 4.2e-05,
+      "p95": 0.122959,
+      "p99": 0.1414975400000001,
+      "samples": 112407
+    },
+    "retrieval_latency_ms": {
+      "max": 12.09975,
+      "mean": 2.2458450628519646,
+      "p50": 2.261167,
+      "p95": 2.619875,
+      "p99": 3.079270480000002,
+      "samples": 112407
+    },
+    "total_wall_seconds": 380.390174083
+  },
+  "welfare": {
+    "archetype_exposure": [
+      {
+        "archetype_index": 0,
+        "archetype_name": "genuinely_satisfying",
+        "exposure_share": 0.39459075476151567,
+        "impressions": 173863,
+        "mean_immediate_satisfaction": -0.019654000207150215,
+        "mean_regret": 0.02074195550503705
+      },
+      {
+        "archetype_index": 1,
+        "archetype_name": "useful",
+        "exposure_share": 0.051970423225665884,
+        "impressions": 22899,
+        "mean_immediate_satisfaction": -0.48137303754919897,
+        "mean_regret": 0.02250064051415193
+      },
+      {
+        "archetype_index": 2,
+        "archetype_name": "ragebait",
+        "exposure_share": 0.05921255696570256,
+        "impressions": 26090,
+        "mean_immediate_satisfaction": -0.8668218066748107,
+        "mean_regret": 0.525789271905053
+      },
+      {
+        "archetype_index": 3,
+        "archetype_name": "clickbait",
+        "exposure_share": 0.11424914211013672,
+        "impressions": 50340,
+        "mean_immediate_satisfaction": -0.6844772429220107,
+        "mean_regret": 0.36055828557380454
+      },
+      {
+        "archetype_index": 4,
+        "archetype_name": "comfort",
+        "exposure_share": 0.10815540062094885,
+        "impressions": 47655,
+        "mean_immediate_satisfaction": -0.30541473062344515,
+        "mean_regret": 0.03131564783808183
+      },
+      {
+        "archetype_index": 5,
+        "archetype_name": "polished_irrelevant",
+        "exposure_share": 0.07125251920039218,
+        "impressions": 31395,
+        "mean_immediate_satisfaction": -0.5789853331595352,
+        "mean_regret": 0.1695205723006248
+      },
+      {
+        "archetype_index": 6,
+        "archetype_name": "niche_treasure",
+        "exposure_share": 0.11034778582711477,
+        "impressions": 48621,
+        "mean_immediate_satisfaction": -0.12166677476951837,
+        "mean_regret": 0.04453640414029879
+      },
+      {
+        "archetype_index": 7,
+        "archetype_name": "background_music",
+        "exposure_share": 0.09022141728852334,
+        "impressions": 39753,
+        "mean_immediate_satisfaction": -0.5267782301054194,
+        "mean_regret": 0.03639728499211563
+      }
+    ],
+    "harmful_fatigue": 0.31150494758763725,
+    "harmful_fatigue_source": "Phase 16 (realism.session_dynamics): mean end-of-session harmful fatigue over closed sessions (see the session_health block / session_health.csv) — no longer a placeholder under this gate.",
+    "impressions": 440616,
+    "mean_immediate_satisfaction": -0.29753887450648203,
+    "mean_regret": 0.10534478620384401,
+    "not_yet_modeled": [],
+    "note": "Hidden user welfare group (Phase 15, V2 TDD §6). Present only under realism.latent_reactions. Every impression computes a hidden LatentReaction whose immediate satisfaction ([-1,1]) and regret ([0,1]) are aggregated here through the D18 EVALUATION CARVE-OUT — the latent never reaches any recommender-visible structure (no latent field is ever serialized on an InteractionEvent or User; the leak audit enforces this). These are ground-truth welfare, DISTINCT from the engagement-proxy reward the online learner optimizes: engagement is evidence, not truth (V2 TDD 3.2), so mean_immediate_satisfaction can diverge from reward_per_impression. satisfaction_per_minute = sum(immediate satisfaction) / sum(simulated watch-minutes) [watch_seconds/60] — satisfaction accrued per minute of watch time (can be negative), NOT a per-impression mean; watch_minutes is the reproducible denominator. archetype_exposure gives each hidden archetype's impression share (the direct 'does the engagement arm over-serve ragebait/clickbait?' measurement) plus its mean satisfaction/regret, one row per catalog archetype in index order. harmful_fatigue and platform_trust are NOT-YET-MODELED placeholders (constant 0) — harmful fatigue becomes real in P16 (session dynamics), platform trust in P20 (retention); emitted now so the schema is stable early (D22). Per-round rows are in welfare_metrics.csv, per-archetype rows in welfare_archetype_metrics.csv. Deterministic.",
+    "platform_trust": 0.012091404729709118,
+    "platform_trust_source": "Phase 20 (P20 gate): run-end population mean of the hidden retention trust (uninitialized trust reads the platformTrust trait); the per-day trust trajectory is longterm_metrics.csv's mean_trust / the long_term block — no longer a placeholder under this gate.",
+    "satisfaction_per_minute": -0.9168099951205066,
+    "watch_minutes": 142996.24723475674
+  }
+}

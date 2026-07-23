@@ -55,6 +55,34 @@ CandidateSource representativeSource(const std::vector<CandidateSource> &sources
 
 bool isExplorationLabeled(const Candidate &c) { return c.source == CandidateSource::Exploration; }
 
+// Phase 22 served-time ranking capture (contracts §7, see orchestrator.hpp). Runs the runner-
+// supplied extractor ONCE on the best-first served pool and records one row per candidate in
+// poolRank order. The extractor is pure over (reels, config, contentV2, user, pool, now) and every
+// pool-relative feature is set-invariant, so `features[i]` is byte-identical to the FeatureVector
+// the ranker computed for the same reel. `fullSources[i]` is the complete merged retrieval-source
+// union for `bestFirstPool[i]` (Candidate carries only the single representative label). Called
+// only when a sink + extractor were supplied (a sampled logging request); never on a
+// production/golden path.
+void fillRankingCapture(RankingCapture &cap, const User &user, Timestamp now,
+                        const std::vector<Candidate> &bestFirstPool,
+                        const std::vector<std::vector<CandidateSource>> &fullSources) {
+    const std::vector<FeatureVector> features = cap.extractor->extract(user, bestFirstPool, now);
+    cap.rows.clear();
+    cap.rows.reserve(bestFirstPool.size());
+    for (std::size_t i = 0; i < bestFirstPool.size(); ++i) {
+        const Candidate &c = bestFirstPool[i];
+        RankingCaptureRow row;
+        row.reelId = c.reelId;
+        row.poolRank = i;
+        row.servedScore = c.rankingScore;
+        row.explorationLabeled = isExplorationLabeled(c);
+        row.retrievalSimilarity = c.retrievalSimilarity;
+        row.sources = fullSources[i];
+        row.features = features[i];
+        cap.rows.push_back(std::move(row));
+    }
+}
+
 } // namespace
 
 Orchestrator::Orchestrator(std::vector<CandidateGenerator *> sources,
@@ -236,6 +264,31 @@ RecommendationResponse Orchestrator::recommend(const User &user,
         Stopwatch reranking;
         response.rerankingLatencyMs = reranking.elapsedMs();
 
+        // Phase 22 served-time capture (contracts §7): identity path — the full served pool is
+        // `pool` in best-first (retrieval-similarity) order; served score == retrieval similarity.
+        // Captured HERE, before the feed loop below moves each MergedCandidate's source vector out.
+        // Gate-guarded: request.capture is set (and its extractor non-null) only for a sampled
+        // logging request, so a production/golden run does zero extra work (byte-identical, D17).
+        if (request.capture != nullptr && request.capture->extractor != nullptr) {
+            std::vector<Candidate> capturePool;
+            capturePool.reserve(pool.size());
+            std::vector<std::vector<CandidateSource>> captureSources;
+            captureSources.reserve(pool.size());
+            for (const MergedCandidate &m : pool) {
+                Candidate c{};
+                c.reelId = m.reelId;
+                c.source = representativeSource(m.sources); // Exploration wins if present
+                c.retrievalDistance = m.retrievalDistance;
+                c.retrievalSimilarity = m.retrievalSimilarity;
+                c.rankingScore =
+                    m.retrievalSimilarity; // identity stage: served score == similarity
+                capturePool.push_back(std::move(c));
+                captureSources.push_back(m.sources);
+            }
+            fillRankingCapture(*request.capture, user, request.requestTime, capturePool,
+                               captureSources);
+        }
+
         // --- Truncate to the feed size, assign ranks 0..n-1, score = similarity, propagate the
         // label vector into each RankedReel (multi-label per TDD 8.5/8.7). The 4-field aggregate
         // init leaves featureContributions default-empty.
@@ -282,6 +335,24 @@ RecommendationResponse Orchestrator::recommend(const User &user,
     // AND request.enableDiversity is set.
     Stopwatch reranking;
     applyExplorationGuarantee(ranked, feedSize);
+
+    // Phase 22 served-time capture (contracts §7): ranked path — `ranked` is now the full served
+    // pool best-first (post-exploration-guarantee); each Candidate carries its served rankingScore,
+    // retrieval similarity, and representative source, and labelsById still holds the FULL source
+    // union (untouched until the truncation loop below). Diversity reranking reorders only the
+    // FEED, never this pool order, so poolRank is stable across both ranked sub-paths.
+    // Gate-guarded: only a sampled logging request sets request.capture, so production/golden runs
+    // do nothing (D17).
+    if (request.capture != nullptr && request.capture->extractor != nullptr) {
+        std::vector<std::vector<CandidateSource>> captureSources;
+        captureSources.reserve(ranked.size());
+        for (const Candidate &c : ranked) {
+            auto it = labelsById.find(c.reelId);
+            captureSources.push_back(
+                it != labelsById.end() ? it->second : std::vector<CandidateSource>{c.source});
+        }
+        fillRankingCapture(*request.capture, user, request.requestTime, ranked, captureSources);
+    }
 
     if (reranker_ != nullptr && request.enableDiversity) {
         // The exploration guarantee already reordered `ranked` (best-first, promotions applied), so

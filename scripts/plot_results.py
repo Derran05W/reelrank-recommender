@@ -149,6 +149,32 @@ plot whose required inputs are missing across every run:
                          y=welfare.mean_immediate_satisfaction, one labeled
                          point per run -- the retention-vs-hidden-welfare
                          frontier. Skipped for any run missing either value.
+  calibration_<target>.png  Phase 22 reliability diagrams (V2 TDD §4.19-4.20/
+                         §4.22, docs/design/P22-CONTRACTS.md §6): one PNG per
+                         `calibration-<target>.csv` passed via
+                         --phase22-calibration DIR (contracts §5 frozen
+                         header: bin,mean_pred,mean_actual,count) -- mean_pred
+                         vs. mean_actual per bin, a neutral-gray y=x "perfect
+                         calibration" reference line, per-bin count encoded
+                         as marker area. Target name is read from the
+                         filename. Skipped per-file (warned) when absent,
+                         unusable, or not matching the calibration-<target>
+                         .csv naming pattern.
+  offline_auc.png        Phase 22 headline figure (V2 TDD §4.19-4.20): grouped
+                         bar chart of held-out AUC, one group per BINARY
+                         target, one bar per model (contracts §5 frozen set:
+                         learned + the three baselines -- global frequency,
+                         per-source frequency, served-score-as-predictor),
+                         from the training_eval.csv (contracts §5 frozen
+                         header) passed via --phase22 EVAL_CSV. Rows with a
+                         NaN auc are skipped first (this alone makes the
+                         chart binary-targets-only, since every row of a
+                         continuous target carries NaN auc by construction);
+                         an AUC=0.5 "chance" guide line is drawn for
+                         reference. Expects a single split's training_eval
+                         .csv (a file with more than one `split` value plots
+                         only the first, warned). Skipped entirely if no
+                         (target, model) row has a usable auc.
 
 Exit status: 0 if at least one plot was written, 1 if none were.
 """
@@ -1014,6 +1040,168 @@ def plot_retention_welfare_frontier(runs: list, outdir: Path,
     return True
 
 
+# --- Phase 22 offline evaluation (V2 TDD §4.19-4.20/§4.22, docs/design/P22-CONTRACTS.md §6) ----
+#
+# plot_calibration() / plot_offline_auc() read scripts/phase22_report.py's own inputs --
+# calibration-<target>.csv and training_eval.csv (contracts §5 frozen headers), produced by
+# `train_models` (one invocation per split, scripts/run_phase22_logworld.sh). Both are
+# DELIBERATELY INDEPENDENT of RunData/load_run and of every prior phase's loader dataclass
+# (Phase20Run/Phase21Run) above: this data has no per-experiment result directory at all -- it is
+# per-(target,model,split) rows in one CSV, or one small file per target -- so neither existing
+# shape fits, matching this file's own established precedent (the Phase 20/21 section headers
+# above) of adding a small independent function pair rather than bending an unrelated loader to
+# fit. Model color is FIXED by model identity (never cycled by target), consistent with every
+# other qualitative encoding in this file (COLOR_CYCLE[i % len(COLOR_CYCLE)] indexed by a STABLE
+# list, exactly like load_run's per-run colors above).
+
+_PHASE22_MODELS = ["learned", "global_frequency", "per_source_frequency", "served_score"]
+_PHASE22_MODEL_LABELS = {
+    "learned": "learned",
+    "global_frequency": "global frequency",
+    "per_source_frequency": "per-source frequency",
+    "served_score": "served score",
+}
+
+
+def plot_calibration(calibration_csvs: list, outdir: Path) -> int:
+    """Phase 22 reliability diagrams (contracts §6: "plot_calibration(target_csvs, outdir), one
+    PNG per target"): mean_pred (x) vs. mean_actual (y) per bin, ONE PNG PER
+    `calibration-<target>.csv` given (contracts §5 frozen header: bin,mean_pred,mean_actual,count
+    -- 10 equal-count bins), plus a neutral-gray dashed y=x "perfect calibration" reference line
+    and per-bin `count` encoded as marker AREA (matplotlib's scatter `s` parameter is already an
+    area in points^2, so scaling it linearly with count is the perceptually-correct
+    area-proportional-to-value encoding -- deliberately not a count-bar underlay, which would need
+    a second y-axis and this file has no dual-axis chart anywhere). The target name is read from
+    the filename (`calibration-<target>.csv`, contracts' own frozen naming -- e.g. as copied by
+    scripts/phase22_report.py's --calibration-dir into
+    <out>/calibration/<source-dir-slug>/calibration-<target>.csv). A file whose name does not
+    match that pattern, or that is missing/unreadable/missing a required column/empty after
+    dropping unusable rows, is skipped with a warning (same per-file warn-skip convention as
+    plot_archetype_share_by_day above). Returns the COUNT of PNGs written (same convention as
+    plot_archetype_share_by_day / the Phase 11 benchmark plots below).
+    """
+    written = 0
+    for raw_path in calibration_csvs:
+        path = Path(raw_path)
+        stem = path.stem  # "calibration-<target>" with the .csv suffix stripped
+        if not stem.startswith("calibration-") or len(stem) <= len("calibration-"):
+            warn(f"skipping {path}: filename does not match calibration-<target>.csv")
+            continue
+        target = stem[len("calibration-"):]
+
+        df = _read_csv(path)
+        if df is None:
+            continue
+        required = {"bin", "mean_pred", "mean_actual", "count"}
+        missing = required - set(df.columns)
+        if missing:
+            warn(f"skipping {path}: missing required column(s) {sorted(missing)}")
+            continue
+        df = df.dropna(subset=["bin", "mean_pred", "mean_actual", "count"])
+        if df.empty:
+            warn(f"skipping {path}: no usable (non-NaN) row in bin/mean_pred/mean_actual/count")
+            continue
+        df = df.sort_values("bin")
+
+        x, y = df["mean_pred"].tolist(), df["mean_actual"].tolist()
+        counts = df["count"].tolist()
+        max_count = max(counts) if counts else 0.0
+        sizes = [30.0 + 270.0 * (c / max_count) if max_count > 0 else 60.0 for c in counts]
+
+        fig, ax = plt.subplots(figsize=FIGSIZE)
+        combined = x + y
+        lo, hi = min(combined), max(combined)
+        pad = 0.03 * (hi - lo) if hi > lo else 0.05
+        ax.plot([lo - pad, hi + pad], [lo - pad, hi + pad], color="0.5", linestyle="--",
+               linewidth=1.5, zorder=1, label="perfect calibration (y=x)")
+        ax.plot(x, y, color=COLOR_CYCLE[0], linewidth=1.5, zorder=2, label=target)
+        ax.scatter(x, y, s=sizes, color=COLOR_CYCLE[0], zorder=3, edgecolor="white", linewidth=0.6)
+        ax.text(0.02, 0.98, "marker area ∝ bin count", transform=ax.transAxes, va="top",
+               fontsize=7, color="0.4")
+        finish_figure(fig, ax, outdir / f"calibration_{target}.png",
+                     "predicted (mean per bin)", "actual (mean per bin)",
+                     f"Calibration -- {target} (n={sum(counts):g})")
+        written += 1
+
+    if written == 0:
+        warn("skipping plot_calibration: no usable calibration-<target>.csv given")
+    return written
+
+
+def plot_offline_auc(training_eval_csv, outdir: Path, filename: str = "offline_auc.png") -> bool:
+    """Phase 22 headline figure (contracts §6: "plot_offline_auc(training_eval, outdir), grouped
+    bar: learned vs baselines per target"): grouped bar chart, one group per BINARY target, one
+    bar per model (contracts §5 frozen model set: learned + the three baselines), height = held-out
+    AUC. Expects a SINGLE split's training_eval.csv (call once per split -- matching
+    `train_models`' own one-split-per-invocation output, contracts §5); if the given file DOES
+    carry more than one `split` value, only the first (sorted) is plotted, with a warning, rather
+    than conflating two splits' AUCs in one bar group. Rows with a NaN `auc` are skipped BEFORE
+    grouping (contracts' own "NaN where inapplicable") -- since every row of a continuous target
+    (e.g. watch_ratio) carries NaN auc by construction, this single filter is what makes the chart
+    "binary targets only" (V2 TDD §4.19/§4.20) without a separate target-type lookup; a target
+    left with fewer than four models after that filter still renders with a gap (never a
+    misleading zero-height bar) for whichever model's row was NaN/absent. A horizontal AUC=0.5
+    "chance" guide (neutral gray dashed, matching plot_calibration's y=x reference convention)
+    gives every bar an absolute reference, not just a relative one.
+    """
+    df = _read_csv(Path(training_eval_csv))
+    if df is None:
+        warn(f"skipping {filename}: {training_eval_csv} missing or unreadable")
+        return False
+    required = {"target", "model", "auc"}
+    missing = required - set(df.columns)
+    if missing:
+        warn(f"skipping {filename}: {training_eval_csv} missing required column(s) {sorted(missing)}")
+        return False
+
+    if "split" in df.columns:
+        splits = sorted(s for s in df["split"].dropna().unique())
+        if len(splits) > 1:
+            warn(f"{training_eval_csv} contains multiple splits {splits}; plotting only "
+                 f"'{splits[0]}' (call plot_offline_auc once per split's own training_eval.csv)")
+            df = df[df["split"] == splits[0]]
+
+    df = df[df["auc"].notna()]
+    if df.empty:
+        warn(f"skipping {filename}: no row in {training_eval_csv} has a non-NaN auc (binary "
+             f"targets only -- expected if every target present is continuous, e.g. watch_ratio)")
+        return False
+
+    targets = sorted(df["target"].unique())
+    n_models = len(_PHASE22_MODELS)
+    width = 0.8 / n_models
+
+    fig, ax = plt.subplots(figsize=(max(FIGSIZE[0], 1.4 * len(targets)), FIGSIZE[1]))
+    any_bar = False
+    for i, model in enumerate(_PHASE22_MODELS):
+        offset = (i - (n_models - 1) / 2.0) * width
+        xs, hs = [], []
+        for xi, target in enumerate(targets):
+            rows = df[(df["target"] == target) & (df["model"] == model)]
+            if rows.empty:
+                continue
+            xs.append(xi + offset)
+            hs.append(float(rows["auc"].iloc[0]))
+        if not hs:
+            continue
+        ax.bar(xs, hs, width=width, color=COLOR_CYCLE[i % len(COLOR_CYCLE)],
+              label=_PHASE22_MODEL_LABELS.get(model, model), zorder=3)
+        any_bar = True
+
+    if not any_bar:
+        plt.close(fig)
+        warn(f"skipping {filename}: no (target, model) pair had a usable auc value")
+        return False
+
+    ax.axhline(0.5, color="0.5", linestyle="--", linewidth=1.2, zorder=1, label="chance (AUC=0.5)")
+    ax.set_xticks(range(len(targets)))
+    ax.set_xticklabels(targets, rotation=20, ha="right")
+    ax.set_ylim(0.0, 1.0)
+    finish_figure(fig, ax, outdir / filename, "target", "AUC (held-out)",
+                 "Offline AUC -- Learned vs. Baselines (binary targets)")
+    return True
+
+
 # --- Phase 11 benchmark plots (retrieval_metrics.csv / load_metrics.csv) ----------------------
 #
 # Each returns the number of PNGs written (0 => nothing usable, warn-skipped), summed in main().
@@ -1619,6 +1807,23 @@ def parse_args(argv=None) -> argparse.Namespace:
              "trust_trajectory.png plots from longterm_metrics.csv -- combine both in one call, "
              "e.g. `plot_results.py <4 arm dirs> --phase20 <engagement-on dir> <proxy-on dir>`.",
     )
+    parser.add_argument(
+        "--phase22", default=None, metavar="EVAL_CSV",
+        help="Phase 22 offline AUC bar chart (V2 TDD §4.19-4.20, docs/design/P22-CONTRACTS.md "
+             "§6): a single split's training_eval.csv (contracts §5 frozen header) for "
+             "offline_auc.png (grouped bars, learned + 3 baselines, binary targets only). "
+             "Independent of the positional result-dir argument and of --phase22-calibration; "
+             "call once per split (e.g. results/phase22/models-temporal/training_eval.csv).",
+    )
+    parser.add_argument(
+        "--phase22-calibration", default=None, dest="phase22_calibration", metavar="DIR",
+        help="Phase 22 reliability diagrams: a directory containing one or more "
+             "calibration-<target>.csv files (contracts §5 frozen header) for calibration_"
+             "<target>.png, one per file found by glob (e.g. "
+             "results/phase22/models-temporal, or scripts/phase22_report.py's own "
+             "<out>/calibration/<slug>/). Independent of --phase22; omit to skip calibration "
+             "plots.",
+    )
     return parser.parse_args(argv)
 
 
@@ -1686,6 +1891,15 @@ def main(argv=None) -> int:
     written += plot_archetype_share_by_day(phase21_runs, outdir)
     written += plot_entropy_by_day(phase20_runs, outdir)
     written += plot_retention_welfare_frontier(runs, outdir)
+
+    # Phase 22 additions (V2 TDD §4.19-4.20/§4.22, docs/design/P22-CONTRACTS.md §6). Both flags
+    # are independent of the positional result-dir arguments and of each other (see their own
+    # parse_args help text above) -- a plain pre-Phase-22 call with neither flag set is unaffected.
+    if args.phase22:
+        written += plot_offline_auc(args.phase22, outdir)
+    if args.phase22_calibration:
+        calibration_csvs = sorted(Path(args.phase22_calibration).glob("calibration-*.csv"))
+        written += plot_calibration(calibration_csvs, outdir)
 
     # Phase 11 benchmark plots (retrieval_metrics.csv / load_metrics.csv). Same dirs; a dir may hold
     # simulation CSVs, benchmark CSVs, or (a parent dir) several benchmark subtrees. Each warn-skips.

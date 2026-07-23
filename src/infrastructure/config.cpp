@@ -621,6 +621,36 @@ void from_json(const json &j, RetentionConfig &c) {
     readKey(j, "hazard_floor", c.hazardFloor);
 }
 
+void to_json(json &j, const LearningV2SurveyConfig &c) {
+    j = json{{"enabled", c.enabled}, {"sample_rate", c.sampleRate}, {"noise_sd", c.noiseSd}};
+}
+
+void from_json(const json &j, LearningV2SurveyConfig &c) {
+    ensureKnownKeys(j, "learning_v2.survey", {"enabled", "sample_rate", "noise_sd"});
+    readKey(j, "enabled", c.enabled);
+    readKey(j, "sample_rate", c.sampleRate);
+    readKey(j, "noise_sd", c.noiseSd);
+}
+
+void to_json(json &j, const LearningV2Config &c) {
+    j = json{{"training_log", c.trainingLog},
+             {"log_sample_rate", c.logSampleRate},
+             {"log_pool_sample_rate", c.logPoolSampleRate},
+             {"log_max_rows_per_file", c.logMaxRowsPerFile},
+             {"survey", c.survey}};
+}
+
+void from_json(const json &j, LearningV2Config &c) {
+    ensureKnownKeys(j, "learning_v2",
+                    {"training_log", "log_sample_rate", "log_pool_sample_rate",
+                     "log_max_rows_per_file", "survey"});
+    readKey(j, "training_log", c.trainingLog);
+    readKey(j, "log_sample_rate", c.logSampleRate);
+    readKey(j, "log_pool_sample_rate", c.logPoolSampleRate);
+    readKey(j, "log_max_rows_per_file", c.logMaxRowsPerFile);
+    readKey(j, "survey", c.survey);
+}
+
 void to_json(json &j, const ExperimentConfig &c) {
     j = json{{"simulation", c.simulation},
              {"recommendation", c.recommendation},
@@ -638,6 +668,7 @@ void to_json(json &j, const ExperimentConfig &c) {
              {"serving", c.serving},
              {"evolution", c.evolution},
              {"retention", c.retention},
+             {"learning_v2", c.learningV2},
              {"reward", c.reward},
              {"evaluation", c.evaluation},
              {"realism", c.realism},
@@ -646,10 +677,11 @@ void to_json(json &j, const ExperimentConfig &c) {
 
 void from_json(const json &j, ExperimentConfig &c) {
     ensureKnownKeys(j, "<top-level>",
-                    {"simulation",   "recommendation",   "algorithm",  "hnsw",    "ranking",
-                     "learning",     "exploration",      "diversity",  "drift",   "behaviour",
-                     "behaviour_v2", "session_dynamics", "scheduling", "serving", "evolution",
-                     "retention",    "reward",           "evaluation", "realism", "description"});
+                    {"simulation",   "recommendation",   "algorithm",  "hnsw",       "ranking",
+                     "learning",     "exploration",      "diversity",  "drift",      "behaviour",
+                     "behaviour_v2", "session_dynamics", "scheduling", "serving",    "evolution",
+                     "retention",    "learning_v2",      "reward",     "evaluation", "realism",
+                     "description"});
     readKey(j, "simulation", c.simulation);
     readKey(j, "recommendation", c.recommendation);
     readKey(j, "algorithm", c.algorithm);
@@ -666,6 +698,7 @@ void from_json(const json &j, ExperimentConfig &c) {
     readKey(j, "serving", c.serving);
     readKey(j, "evolution", c.evolution);
     readKey(j, "retention", c.retention);
+    readKey(j, "learning_v2", c.learningV2);
     readKey(j, "reward", c.reward);
     readKey(j, "evaluation", c.evaluation);
     readKey(j, "realism", c.realism);
@@ -700,6 +733,19 @@ void from_json(const json &j, ExperimentConfig &c) {
     if (c.retention.enabled && c.simulation.scheduler != "event_queue") {
         throw std::invalid_argument(
             "retention.enabled requires simulation.scheduler='event_queue'");
+    }
+    // Phase 22 (contracts §1): the training log records the event-driven world only (V2 §9), so
+    // training_log requires the event scheduler. The survey table is written from the SAME event-
+    // runner hook, so survey.enabled needs it too — matching every sibling event-only gate
+    // (serving/retention/ecosystem_metrics), a round_robin run would silently drop it (fail-fast,
+    // D10). Both default OFF => byte-identical output for every existing run (D17).
+    if (c.learningV2.trainingLog && c.simulation.scheduler != "event_queue") {
+        throw std::invalid_argument(
+            "learning_v2.training_log requires simulation.scheduler='event_queue'");
+    }
+    if (c.learningV2.survey.enabled && c.simulation.scheduler != "event_queue") {
+        throw std::invalid_argument(
+            "learning_v2.survey.enabled requires simulation.scheduler='event_queue'");
     }
     if (c.realism.contentV2 && (c.simulation.newUsers > 0 || c.simulation.newReels > 0)) {
         throw std::invalid_argument("realism.content_v2 does not support mid-simulation "
