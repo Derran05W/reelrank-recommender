@@ -175,6 +175,40 @@ plot whose required inputs are missing across every run:
                          .csv (a file with more than one `split` value plots
                          only the first, warned). Skipped entirely if no
                          (target, model) row has a usable auc.
+  multiobjective_frontier.png  Phase 23 headline figure (V2 TDD §10 item 8,
+                         docs/design/P23-CONTRACTS.md §6): scatter of x =
+                         engagement (summary.json metrics.reward_per_impression)
+                         vs. y = mean hidden satisfaction (welfare.
+                         mean_immediate_satisfaction), marker size encoding
+                         long_term.retention_7d (documented legend note; a run
+                         without a usable long_term block still plots, at a
+                         fixed neutral size, rather than being dropped), one
+                         labeled point per run -- meant to be called with one
+                         positional result-dir per arm from the Phase 23
+                         nine-arm matrix (hand_tuned / semantic / learned(=
+                         w_balanced) / learned_survey_off / w_sat_100 /
+                         w_sat_70 / w_watch_70 / w_watch_100 /
+                         w_watch_100_noexit, contracts §4). Skipped for any
+                         run missing either axis value (same requirement as
+                         engagement_vs_welfare.png).
+  offline_closedloop_gap.png  Phase 23 offline-vs-closed-loop gap figure
+                         (docs/design/P23-CONTRACTS.md §6): grouped bars, one
+                         group per target (or per target+arm when more than
+                         one learned arm's rows are present in the input),
+                         offline held-out metric (package B's
+                         `offline_learned` column) vs. closed-loop delta vs.
+                         hand_tuned (package B's `aligned_cl_delta` column),
+                         from package B's gap_analysis.csv passed via
+                         --phase23 GAP_CSV. Column names are discovered
+                         DEFENSIVELY by candidate search (package B's real
+                         column names, confirmed by reading
+                         scripts/phase23_gap_analysis.py directly once it
+                         landed, are tried first; this function's original
+                         pre-coordination guesses are kept as fallbacks) --
+                         see plot_offline_closedloop_gap's docstring. Skipped
+                         when the file is absent/unreadable or no target/
+                         offline-value/closed-loop-delta column is found
+                         under any candidate name.
 
 Exit status: 0 if at least one plot was written, 1 if none were.
 """
@@ -1202,6 +1236,193 @@ def plot_offline_auc(training_eval_csv, outdir: Path, filename: str = "offline_a
     return True
 
 
+# --- Phase 23 multi-objective frontier + offline/closed-loop gap (V2 TDD §4.21/§10 item 8,
+# docs/design/P23-CONTRACTS.md §6) --------------------------------------------------------------
+#
+# plot_multiobjective_frontier reuses the EXISTING RunData/load_run AS-IS (both fields it needs --
+# metrics.reward_per_impression and welfare.mean_immediate_satisfaction -- are already-loaded
+# summary.json content, plus long_term.retention_7d for marker size; same shape as
+# plot_engagement_vs_welfare/plot_retention_welfare_frontier above, called but not modified, per
+# this package's append-only brief). plot_offline_closedloop_gap reads package B's
+# gap_analysis.csv (scripts/phase23_gap_analysis.py, contracts §4). THIS PACKAGE STARTED BEFORE
+# PACKAGE B LANDED that script (contracts §4 describes its CONTENT -- "per-target table -- offline
+# held-out AUC/RMSE ... vs closed-loop deltas" -- but freezes no exact column names/types the way
+# e.g. contracts §3's retraining_log.csv header is frozen verbatim), so this function was written
+# candidate-column-search style, the same `_first_candidate` philosophy this file's own Phase 19
+# section already established for an undetermined pre-integration schema. Package B's script
+# SUBSEQUENTLY landed in this same checkout (concurrent work, uncommitted at the time this comment
+# was updated) while this package was still writing plot_results.py -- its ACTUAL
+# `write_csv()` was read directly and confirms: `target` (per-target grouping) and `arm` (learned-
+# arm label, present when more than one learned arm's rows share the file) were already this
+# script's first-choice candidates and match exactly; the offline value and closed-loop delta
+# columns are `offline_learned` (the learned model's own held-out AUC/RMSE point estimate) and
+# `aligned_cl_delta` (B's own per-target ALIGNMENT map -- e.g. `satisfaction`/`not_interested` ->
+# `mean_satisfaction`, `session_exit` -> `mean_session_utility`, everything else ->
+# `reward_per_impression` -- resolved to the single closed-loop metric most relevant to that
+# target, exactly the "one representative delta per target" this function needs), NEITHER of which
+# was in this function's original speculative candidate list -- both are now prepended as the
+# FIRST (confirmed-real) candidates, with the original guesses kept as fallbacks in case a
+# differently-shaped gap_analysis.csv is ever pointed at this function. `offline_metric_type` (B's
+# real column disambiguating AUC- from RMSE-valued targets) is read the same defensive way and, if
+# found, appended to each group's x-axis label so mixed binary/continuous targets sharing one
+# y-axis are not misread as directly comparable.
+
+
+def plot_multiobjective_frontier(runs: list[RunData], outdir: Path,
+                                 filename: str = "multiobjective_frontier.png") -> bool:
+    """Phase 23 headline figure (V2 TDD §10 item 8, docs/design/P23-CONTRACTS.md §6 / plan Phase 23
+    task 3b): scatter of x = engagement (summary.json metrics.reward_per_impression) vs. y = mean
+    hidden satisfaction (welfare.mean_immediate_satisfaction), marker size encoding
+    long_term.retention_7d (documented in a legend note -- matplotlib scatter's `s` is already an
+    area-proportional-to-value encoding, the same convention plot_calibration's per-bin-count
+    marker sizing established in Phase 22), one labeled point per run -- meant to be called with
+    one RunData per arm from the Phase 23 nine-arm matrix (hand_tuned / semantic / learned(=
+    w_balanced) / learned_survey_off / w_sat_100 / w_sat_70 / w_watch_70 / w_watch_100 /
+    w_watch_100_noexit, contracts §4). Skipped for any run missing reward_per_impression or
+    mean_immediate_satisfaction (same requirement as plot_engagement_vs_welfare); retention_7d is
+    OPTIONAL per-run -- a run without a usable long_term block still plots, at a fixed neutral
+    marker size, rather than being dropped (long_term is gated separately, P20 gates, from welfare,
+    P14/15 gate -- a hand_tuned/semantic control arm could plausibly have one without the other).
+    """
+    usable = []
+    for run in runs:
+        if run.summary is None:
+            continue
+        engagement = run.summary.get("metrics", {}).get("reward_per_impression")
+        welfare = run.summary.get("welfare")
+        if engagement is None or not isinstance(welfare, dict):
+            continue
+        satisfaction = welfare.get("mean_immediate_satisfaction")
+        if satisfaction is None:
+            continue
+        long_term = run.summary.get("long_term")
+        retention = long_term.get("retention_7d") if isinstance(long_term, dict) else None
+        if not (isinstance(retention, (int, float)) and not isinstance(retention, bool)):
+            retention = None
+        usable.append((run, engagement, satisfaction, retention))
+
+    if not usable:
+        warn(f"skipping {filename}: no run has both metrics.reward_per_impression and "
+             f"welfare.mean_immediate_satisfaction (welfare requires realism.latent_reactions)")
+        return False
+
+    min_area, max_area, neutral_area = 80.0, 500.0, 160.0
+    retentions = [r for _run, _e, _s, r in usable if r is not None]
+    lo, hi = (min(retentions), max(retentions)) if retentions else (None, None)
+
+    def area_for(retention):
+        if retention is None or lo is None or hi is None or hi <= lo:
+            return neutral_area
+        return min_area + (retention - lo) / (hi - lo) * (max_area - min_area)
+
+    fig, ax = plt.subplots(figsize=FIGSIZE)
+    for run, engagement, satisfaction, retention in usable:
+        ax.scatter(engagement, satisfaction, s=area_for(retention), zorder=3, color=run.color,
+                  label=run.label, edgecolor="white", linewidth=0.6)
+        ax.annotate(run.label, (engagement, satisfaction), textcoords="offset points",
+                   xytext=(8, 4), fontsize=8)
+    ax.text(0.02, 0.98, "marker area ∝ retention_7d  (fixed size when a run has none)",
+           transform=ax.transAxes, va="top", fontsize=7, color="0.4")
+    ax.margins(0.18)  # headroom so corner point annotations are not clipped
+    finish_figure(fig, ax, outdir / filename,
+                 "engagement  (reward per impression)",
+                 "mean hidden satisfaction",
+                 "Multi-Objective Frontier: Engagement vs. Hidden Satisfaction")
+    return True
+
+
+# First entry in each list is package B's CONFIRMED real scripts/phase23_gap_analysis.py column
+# (read directly from its write_csv()); the rest are this function's original pre-coordination
+# guesses, kept as defensive fallbacks (see section header comment above).
+_P23_GAP_TARGET_CANDIDATES = ["target", "model_target", "metric_target", "metric"]
+_P23_GAP_ARM_CANDIDATES = ["arm", "learned_arm", "model"]
+_P23_GAP_OFFLINE_CANDIDATES = [
+    "offline_learned", "offline_auc_or_rmse", "offline_value", "offline_metric_value",
+    "offline_metric", "offline_auc", "offline_rmse",
+]
+_P23_GAP_DELTA_CANDIDATES = [
+    "aligned_cl_delta", "closed_loop_delta", "closed_loop_delta_vs_hand_tuned", "closedloop_delta",
+    "cl_delta", "delta",
+]
+_P23_GAP_METRIC_TYPE_CANDIDATES = ["offline_metric_type", "metric_type"]
+
+
+def _first_present_column(columns, candidates: list) -> Optional[str]:
+    for c in candidates:
+        if c in columns:
+            return c
+    return None
+
+
+def plot_offline_closedloop_gap(gap_csv, outdir: Path,
+                                filename: str = "offline_closedloop_gap.png") -> bool:
+    """Phase 23 offline-vs-closed-loop gap figure (docs/design/P23-CONTRACTS.md §6 / plan Phase 23
+    task 4): grouped bar chart, one group per TARGET (or per target+arm when more than one learned
+    arm's rows are present in `gap_csv`), two bars per group -- the target's offline held-out
+    metric (AUC or RMSE; package B's `offline_learned` column) and its closed-loop delta vs.
+    hand_tuned (package B's own per-target ALIGNMENT-map choice of the single most-relevant
+    closed-loop metric, its `aligned_cl_delta` column, contracts §4). Reads `gap_csv`, package B's
+    `gap_analysis.csv` (scripts/phase23_gap_analysis.py) -- its real column names were confirmed by
+    reading that script's `write_csv()` directly once it landed in this same checkout (see this
+    section's header comment for the exact mapping); column names are still discovered
+    DEFENSIVELY by candidate search (the confirmed names tried first, this function's original
+    pre-coordination guesses kept as fallbacks) rather than assumed as a single frozen header the
+    way e.g. plot_offline_auc reads Phase 22's training_eval.csv, since gap_analysis.csv's header
+    is not a contracts-frozen literal. When an `offline_metric_type` column is present (B's real
+    AUC-vs-RMSE disambiguator), it is appended to each group's x-axis label so targets of different
+    metric types sharing one y-axis are not misread as directly comparable. Skipped (warn) when the
+    file is absent/unreadable, or a required target/offline-value/delta-value column cannot be
+    found under any candidate name.
+    """
+    df = _read_csv(Path(gap_csv))
+    if df is None:
+        warn(f"skipping {filename}: {gap_csv} missing or unreadable")
+        return False
+
+    target_col = _first_present_column(df.columns, _P23_GAP_TARGET_CANDIDATES)
+    offline_col = _first_present_column(df.columns, _P23_GAP_OFFLINE_CANDIDATES)
+    delta_col = _first_present_column(df.columns, _P23_GAP_DELTA_CANDIDATES)
+    if target_col is None or offline_col is None or delta_col is None:
+        warn(f"skipping {filename}: {gap_csv} -- could not find a target/offline-value/"
+             f"closed-loop-delta column under any candidate name (columns found: "
+             f"{list(df.columns)}; candidates tried: target={_P23_GAP_TARGET_CANDIDATES}, "
+             f"offline={_P23_GAP_OFFLINE_CANDIDATES}, delta={_P23_GAP_DELTA_CANDIDATES})")
+        return False
+
+    arm_col = _first_present_column(df.columns, _P23_GAP_ARM_CANDIDATES)
+    metric_type_col = _first_present_column(df.columns, _P23_GAP_METRIC_TYPE_CANDIDATES)
+    df = df.dropna(subset=[target_col, offline_col, delta_col])
+    if df.empty:
+        warn(f"skipping {filename}: no usable (non-NaN) row in {gap_csv}")
+        return False
+
+    def _label(row) -> str:
+        label = str(row[target_col])
+        if arm_col is not None and df[arm_col].nunique() > 1:
+            label += f"\n({row[arm_col]})"
+        if metric_type_col is not None and row[metric_type_col]:
+            label += f" [{row[metric_type_col]}]"
+        return label
+
+    group_labels = [_label(row) for _idx, row in df.iterrows()]
+    offline_vals = df[offline_col].tolist()
+    delta_vals = df[delta_col].tolist()
+
+    x = list(range(len(group_labels)))
+    width = 0.38
+    fig, ax = plt.subplots(figsize=(max(FIGSIZE[0], 1.2 * len(group_labels)), FIGSIZE[1]))
+    ax.bar([i - width / 2 for i in x], offline_vals, width, color=COLOR_CYCLE[0],
+          label=f"offline ({offline_col})", zorder=3)
+    ax.bar([i + width / 2 for i in x], delta_vals, width, color=COLOR_CYCLE[1],
+          label=f"closed-loop delta vs hand_tuned ({delta_col})", zorder=3)
+    ax.axhline(0.0, color="0.5", linestyle="-", linewidth=1.0, zorder=1)
+    ax.set_xticks(x)
+    ax.set_xticklabels(group_labels, rotation=20, ha="right", fontsize=8)
+    finish_figure(fig, ax, outdir / filename, "target", "value",
+                 "Offline Held-Out Metric vs. Closed-Loop Delta (vs. hand_tuned)")
+    return True
+
+
 # --- Phase 11 benchmark plots (retrieval_metrics.csv / load_metrics.csv) ----------------------
 #
 # Each returns the number of PNGs written (0 => nothing usable, warn-skipped), summed in main().
@@ -1824,6 +2045,17 @@ def parse_args(argv=None) -> argparse.Namespace:
              "<out>/calibration/<slug>/). Independent of --phase22; omit to skip calibration "
              "plots.",
     )
+    parser.add_argument(
+        "--phase23", default=None, metavar="GAP_CSV",
+        help="Phase 23 offline-vs-closed-loop gap chart (docs/design/P23-CONTRACTS.md §6): "
+             "package B's gap_analysis.csv (scripts/phase23_gap_analysis.py) for "
+             "offline_closedloop_gap.png (grouped bars, one group per target, its offline_learned "
+             "metric vs. its aligned_cl_delta vs. hand_tuned). Column names are discovered "
+             "defensively (candidate search, package B's confirmed real names tried first) -- see "
+             "plot_offline_closedloop_gap's docstring. Independent of the positional result-dir "
+             "argument, which (when given, one dir per Phase 23 arm) also drives "
+             "multiobjective_frontier.png. Omit to skip this one chart.",
+    )
     return parser.parse_args(argv)
 
 
@@ -1900,6 +2132,18 @@ def main(argv=None) -> int:
     if args.phase22_calibration:
         calibration_csvs = sorted(Path(args.phase22_calibration).glob("calibration-*.csv"))
         written += plot_calibration(calibration_csvs, outdir)
+
+    # Phase 23 additions (learned multi-objective ranking in the loop, docs/design/
+    # P23-CONTRACTS.md §6). plot_multiobjective_frontier reuses the EXISTING `runs` list (RunData
+    # already loaded summary.json content -- same shape as plot_engagement_vs_welfare/
+    # plot_retention_welfare_frontier above, called but not modified, per this package's
+    # append-only brief); meant to be called with one positional result-dir per arm from the Phase
+    # 23 nine-arm matrix (contracts §4). plot_offline_closedloop_gap is independent of the
+    # positional result-dir arguments (its own CSV input, package B's gap_analysis.csv, contracts
+    # §4) -- gated behind --phase23, so a plain pre-Phase-23 call is unaffected.
+    written += plot_multiobjective_frontier(runs, outdir)
+    if args.phase23:
+        written += plot_offline_closedloop_gap(args.phase23, outdir)
 
     # Phase 11 benchmark plots (retrieval_metrics.csv / load_metrics.csv). Same dirs; a dir may hold
     # simulation CSVs, benchmark CSVs, or (a parent dir) several benchmark subtrees. Each warn-skips.

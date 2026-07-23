@@ -380,6 +380,8 @@ const char *toString(RecommendationAlgorithm a) {
         return "hnsw_ranker_exploration";
     case RecommendationAlgorithm::OracleSatisfaction:
         return "oracle_satisfaction";
+    case RecommendationAlgorithm::HnswLearnedRanker:
+        return "hnsw_learned_ranker";
     }
     return "random";
 }
@@ -409,10 +411,13 @@ RecommendationAlgorithm algorithmFromString(const std::string &s) {
     if (s == "oracle_satisfaction") {
         return RecommendationAlgorithm::OracleSatisfaction;
     }
+    if (s == "hnsw_learned_ranker") {
+        return RecommendationAlgorithm::HnswLearnedRanker;
+    }
     throw std::invalid_argument(
         "unknown algorithm '" + s +
         "'; valid values: random, popularity, exact_vector, hnsw, hnsw_ranker, "
-        "hnsw_ranker_diversity, hnsw_ranker_exploration, oracle_satisfaction");
+        "hnsw_ranker_diversity, hnsw_ranker_exploration, oracle_satisfaction, hnsw_learned_ranker");
 }
 
 void to_json(json &j, const RecommendationAlgorithm &a) { j = toString(a); }
@@ -632,23 +637,51 @@ void from_json(const json &j, LearningV2SurveyConfig &c) {
     readKey(j, "noise_sd", c.noiseSd);
 }
 
+void to_json(json &j, const LearningV2ValueWeights &c) {
+    j = json{{"watch", c.watch},   {"share", c.share},
+             {"follow", c.follow}, {"satisfaction", c.satisfaction},
+             {"exit", c.exit},     {"regret", c.regret}};
+}
+
+void from_json(const json &j, LearningV2ValueWeights &c) {
+    ensureKnownKeys(j, "learning_v2.value_weights",
+                    {"watch", "share", "follow", "satisfaction", "exit", "regret"});
+    readKey(j, "watch", c.watch);
+    readKey(j, "share", c.share);
+    readKey(j, "follow", c.follow);
+    readKey(j, "satisfaction", c.satisfaction);
+    readKey(j, "exit", c.exit);
+    readKey(j, "regret", c.regret);
+}
+
 void to_json(json &j, const LearningV2Config &c) {
     j = json{{"training_log", c.trainingLog},
              {"log_sample_rate", c.logSampleRate},
              {"log_pool_sample_rate", c.logPoolSampleRate},
              {"log_max_rows_per_file", c.logMaxRowsPerFile},
-             {"survey", c.survey}};
+             {"survey", c.survey},
+             {"learned_ranker", c.learnedRanker},
+             {"value_weights", c.valueWeights},
+             {"retrain_every_hours", c.retrainEveryHours},
+             {"min_training_rows", c.minTrainingRows},
+             {"retrain_epochs", c.retrainEpochs}};
 }
 
 void from_json(const json &j, LearningV2Config &c) {
     ensureKnownKeys(j, "learning_v2",
                     {"training_log", "log_sample_rate", "log_pool_sample_rate",
-                     "log_max_rows_per_file", "survey"});
+                     "log_max_rows_per_file", "survey", "learned_ranker", "value_weights",
+                     "retrain_every_hours", "min_training_rows", "retrain_epochs"});
     readKey(j, "training_log", c.trainingLog);
     readKey(j, "log_sample_rate", c.logSampleRate);
     readKey(j, "log_pool_sample_rate", c.logPoolSampleRate);
     readKey(j, "log_max_rows_per_file", c.logMaxRowsPerFile);
     readKey(j, "survey", c.survey);
+    readKey(j, "learned_ranker", c.learnedRanker);
+    readKey(j, "value_weights", c.valueWeights);
+    readKey(j, "retrain_every_hours", c.retrainEveryHours);
+    readKey(j, "min_training_rows", c.minTrainingRows);
+    readKey(j, "retrain_epochs", c.retrainEpochs);
 }
 
 void to_json(json &j, const ExperimentConfig &c) {
@@ -746,6 +779,20 @@ void from_json(const json &j, ExperimentConfig &c) {
     if (c.learningV2.survey.enabled && c.simulation.scheduler != "event_queue") {
         throw std::invalid_argument(
             "learning_v2.survey.enabled requires simulation.scheduler='event_queue'");
+    }
+    // Phase 23 (contracts §1): the LearnedRanker trains on the in-run training log, so
+    // learned_ranker requires training_log (which itself transitively requires the event
+    // scheduler). Fail-fast (D10); default OFF => byte-identical (D17).
+    if (c.learningV2.learnedRanker && !c.learningV2.trainingLog) {
+        throw std::invalid_argument("learning_v2.learned_ranker requires learning_v2.training_log");
+    }
+    // Phase 23 (contracts §1): the hnsw_learned_ranker algorithm serves the LearnedRanker, so it
+    // requires the learned_ranker gate (which requires training_log + event mode). Rejecting it
+    // here keeps the gate and the algorithm consistent (a learned algorithm with no models would be
+    // a silent misconfig).
+    if (c.algorithm == RecommendationAlgorithm::HnswLearnedRanker && !c.learningV2.learnedRanker) {
+        throw std::invalid_argument(
+            "algorithm='hnsw_learned_ranker' requires learning_v2.learned_ranker");
     }
     if (c.realism.contentV2 && (c.simulation.newUsers > 0 || c.simulation.newReels > 0)) {
         throw std::invalid_argument("realism.content_v2 does not support mid-simulation "

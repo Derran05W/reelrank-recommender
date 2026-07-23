@@ -108,6 +108,17 @@ class ResultsWriter {
     // ecosystem_metrics.csv, so its output directory is byte-identical to a run without the gate
     // (D17).
     static void writeEcosystemMetricsCsv(const ExperimentResult &result);
+    // Phase 23 (contracts §3/§4, D22). Written by writeAll ONLY when learning_v2.learned_ranker is
+    // on (result.learnedModels.configured, event mode); exposed here for targeted tests.
+    // retraining_log.csv: the FROZEN header version,sim_time_seconds,n_train_rows,wall_ms,
+    // targets_trained — one row per retrain (wall_ms is the ONLY non-deterministic column, D9).
+    // A gate-off run writes no retraining_log.csv, so its output directory is byte-identical (D17).
+    static void writeRetrainingLogCsv(const ExperimentResult &result);
+    // Phase 23 (contracts §4/§6). A handful of served candidates' explanation maps from the first
+    // learned-served feed (reel ids + feed positions + the §2 predicted_* / learned_value /
+    // fallback / satisfaction_available terms), for package C to render — the self-describing
+    // schema is written inline in the file. Gate-on only; deterministic.
+    static void writeExplanationSampleJson(const ExperimentResult &result);
 
     // Per-user hidden-preference export row (Phase 20, contract §5). One row per user; the writer
     // emits them in the caller-provided order (the event runner sorts ascending user_id).

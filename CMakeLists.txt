@@ -87,16 +87,21 @@ target_include_directories(rr_recommend PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(rr_recommend PUBLIC rr_vindex)
 target_link_libraries(rr_recommend PRIVATE rr_warnings)
 
-# --- rr_learning_v2: Phase 22 Tier-5 offline-learning pipeline — the training-data LOGGER
-# (src/learning_v2/training_logger.cpp) and package B's in-house SGD learners + CSV training-data
-# reader. A NON-carve-out library barred from simulation/hidden/ by the D18 include-graph guard
-# (its scanned roots include learning_v2). Never links vector-db (D2); rr_core carries config +
-# the pinned hash + nlohmann. -----------------------------------------------------------------
+# --- rr_learning_v2: Tier-5 learning pipeline — the P22 training-data LOGGER
+# (src/learning_v2/training_logger.cpp), package B's in-house SGD learners + CSV training-data
+# reader, AND the P23 in-loop learned ranker (learned_ranker / retrainer /
+# hnsw_learned_ranker_recommender). A NON-carve-out library barred from simulation/hidden/ by the
+# D18 include-graph guard (its scanned roots include learning_v2). Never links vector-db (D2).
+# Phase 23: depends on rr_recommend (PUBLIC) — the LearnedRanker OWNS a WeightedRanker for the
+# cold-start fallback and reuses the serving FeatureExtractor, and the learned recommender wraps the
+# same Orchestrator + candidate sources. rr_recommend does NOT depend back on rr_learning_v2 (the
+# recommendation-side factory rejects hnsw_learned_ranker; the event runner constructs it), so the
+# dependency is one-way — no library cycle. --------------------------------------------------------
 file(GLOB RR_LEARNING_V2_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_SOURCE_DIR}/src/learning_v2/*.cpp)
 add_library(rr_learning_v2 STATIC ${RR_LEARNING_V2_SOURCES})
 target_include_directories(rr_learning_v2 PUBLIC ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(rr_learning_v2 PUBLIC rr_core)
+target_link_libraries(rr_learning_v2 PUBLIC rr_core rr_recommend)
 target_link_libraries(rr_learning_v2 PRIVATE rr_warnings)
 
 # --- rr_evaluation: experiment runner, metrics, oracle regret, results writer (Phase 4). The

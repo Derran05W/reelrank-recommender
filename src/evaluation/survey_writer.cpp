@@ -48,13 +48,13 @@ void SurveyWriter::ensureOpen() {
 // is mapped onto the 5-point Likert scale by the affine bucketing likert = 1 + round((v + 1) * 2),
 // i.e. five equal-width bins over [-1, 1]:  v=-1 -> 1,  v=0 -> 3,  v=+1 -> 5. Deterministic given
 // the stream (round-half-away-from-zero via std::lround).
-void SurveyWriter::maybeSurvey(UserId userId, ReelId reelId, std::uint64_t requestId,
-                               Timestamp timestamp, float immediateSatisfaction,
-                               Rng &explicitFeedback) {
+std::optional<int> SurveyWriter::maybeSurvey(UserId userId, ReelId reelId, std::uint64_t requestId,
+                                             Timestamp timestamp, float immediateSatisfaction,
+                                             Rng &explicitFeedback) {
     const bool surveyed = explicitFeedback.bernoulli(config_.survey.sampleRate); // DRAW 1
     const double noise = explicitFeedback.gaussian() * config_.survey.noiseSd;   // DRAW 2
     if (!surveyed) {
-        return;
+        return std::nullopt;
     }
     const double v = std::clamp(static_cast<double>(immediateSatisfaction) + noise, -1.0, 1.0);
     const long bucket = std::lround((v + 1.0) * 2.0); // (v+1)/2 * 4, in [0, 4]
@@ -63,6 +63,7 @@ void SurveyWriter::maybeSurvey(UserId userId, ReelId reelId, std::uint64_t reque
     ensureOpen();
     surveyOut_ << userId.value << ',' << reelId.value << ',' << requestId << ',' << timestamp << ','
                << likert << '\n';
+    return likert; // Phase 23: the observable label for the in-memory training matrix.
 }
 
 void SurveyWriter::finish() {

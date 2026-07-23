@@ -1,0 +1,161 @@
+{
+  "candidates": [
+    {
+      "explanation": {
+        "fallback": 0.0,
+        "learned_value": 0.3489157557487488,
+        "predicted_exit": -0.007031968794763088,
+        "predicted_follow": 0.001404318492859602,
+        "predicted_regret": -0.0009212344302795827,
+        "predicted_satisfaction": 0.3421745002269745,
+        "predicted_share": 0.01329013705253601,
+        "predicted_watch": 0.0,
+        "satisfaction_available": 1.0
+      },
+      "position": 0,
+      "reel_id": 75257
+    },
+    {
+      "explanation": {
+        "fallback": 0.0,
+        "learned_value": 0.24234069883823395,
+        "predicted_exit": -0.01348956860601902,
+        "predicted_follow": 0.0011696849251165986,
+        "predicted_regret": -0.002388987224549055,
+        "predicted_satisfaction": 0.24307125806808472,
+        "predicted_share": 0.013978310860693455,
+        "predicted_watch": 0.0,
+        "satisfaction_available": 1.0
+      },
+      "position": 1,
+      "reel_id": 12476
+    },
+    {
+      "explanation": {
+        "fallback": 0.0,
+        "learned_value": 0.2306615114212036,
+        "predicted_exit": -0.011606710031628609,
+        "predicted_follow": 0.001483340747654438,
+        "predicted_regret": -0.0015230545541271567,
+        "predicted_satisfaction": 0.22737663984298706,
+        "predicted_share": 0.014931289479136467,
+        "predicted_watch": 0.0,
+        "satisfaction_available": 1.0
+      },
+      "position": 2,
+      "reel_id": 32409
+    },
+    {
+      "explanation": {
+        "fallback": 0.0,
+        "learned_value": 0.15066617727279663,
+        "predicted_exit": -0.03929685428738594,
+        "predicted_follow": 0.0023128967732191086,
+        "predicted_regret": -0.004999898839741945,
+        "predicted_satisfaction": 0.18022134900093079,
+        "predicted_share": 0.012428677640855312,
+        "predicted_watch": 0.0,
+        "satisfaction_available": 1.0
+      },
+      "position": 3,
+      "reel_id": 38481
+    },
+    {
+      "explanation": {
+        "fallback": 0.0,
+        "learned_value": 0.07462859898805618,
+        "predicted_exit": -0.021712856367230415,
+        "predicted_follow": 0.0015910831280052662,
+        "predicted_regret": -0.004488707520067692,
+        "predicted_satisfaction": 0.0882800966501236,
+        "predicted_share": 0.010958983562886715,
+        "predicted_watch": 0.0,
+        "satisfaction_available": 1.0
+      },
+      "position": 4,
+      "reel_id": 86790
+    },
+    {
+      "explanation": {
+        "fallback": 0.0,
+        "learned_value": 0.016138620674610138,
+        "predicted_exit": -0.02542216144502163,
+        "predicted_follow": 0.0013815563870593905,
+        "predicted_regret": -0.002870225114747882,
+        "predicted_satisfaction": 0.0313773974776268,
+        "predicted_share": 0.01167205348610878,
+        "predicted_watch": 0.0,
+        "satisfaction_available": 1.0
+      },
+      "position": 5,
+      "reel_id": 28890
+    },
+    {
+      "explanation": {
+        "fallback": 0.0,
+        "learned_value": 0.0007212025811895728,
+        "predicted_exit": -0.0001054732347256504,
+        "predicted_follow": 1.3077181392873172e-05,
+        "predicted_regret": -4.12597955801175e-08,
+        "predicted_satisfaction": 0.0,
+        "predicted_share": 0.0008136398973874748,
+        "predicted_watch": 0.0,
+        "satisfaction_available": 1.0
+      },
+      "position": 6,
+      "reel_id": 3873
+    },
+    {
+      "explanation": {
+        "fallback": 0.0,
+        "learned_value": 0.0006917450809851289,
+        "predicted_exit": -1.0406719411548693e-05,
+        "predicted_follow": 6.543813015014166e-06,
+        "predicted_regret": -2.580779590033444e-09,
+        "predicted_satisfaction": 0.0,
+        "predicted_share": 0.0006956105935387313,
+        "predicted_watch": 0.0,
+        "satisfaction_available": 1.0
+      },
+      "position": 7,
+      "reel_id": 56183
+    },
+    {
+      "explanation": {
+        "fallback": 0.0,
+        "learned_value": 0.0004979749792255461,
+        "predicted_exit": -3.8043956010369584e-05,
+        "predicted_follow": 4.285794148017885e-06,
+        "predicted_regret": -8.185219613210393e-09,
+        "predicted_satisfaction": 0.0,
+        "predicted_share": 0.0005317413015291095,
+        "predicted_watch": 0.0,
+        "satisfaction_available": 1.0
+      },
+      "position": 8,
+      "reel_id": 92235
+    },
+    {
+      "explanation": {
+        "fallback": 0.0,
+        "learned_value": 0.00026339065516367555,
+        "predicted_exit": -8.392336894758046e-06,
+        "predicted_follow": 1.3538369785237592e-06,
+        "predicted_regret": -5.823992954567814e-10,
+        "predicted_satisfaction": 0.0,
+        "predicted_share": 0.0002704297367017716,
+        "predicted_watch": 0.0,
+        "satisfaction_available": 1.0
+      },
+      "position": 9,
+      "reel_id": 25433
+    }
+  ],
+  "captured": true,
+  "model_version": 1,
+  "note": "Served candidates from the FIRST learned-served feed after the in-loop models went ready. Each candidate's `explanation` is the LearnedRanker featureContributions map: predicted_watch/share/follow/satisfaction/exit/regret are the WEIGHTED value terms (exit/regret negative); learned_value is their sum (== rankingScore); fallback is 0 for learned-served rows; satisfaction_available is 1 iff a survey satisfaction model was trained. reel_id + position give the served feed slot.",
+  "request_id": 34178,
+  "schema": "phase23_explanation_sample_v1",
+  "sim_time_seconds": 86402,
+  "user_id": 9862
+}

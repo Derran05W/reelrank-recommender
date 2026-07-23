@@ -292,6 +292,96 @@ TEST(ConfigTest, LearningV2ParsesRoundTripsAndRequiresEventQueue) {
     EXPECT_TRUE(out["learning_v2"]["survey"]["enabled"].get<bool>());
 }
 
+TEST(ConfigTest, LearnedRankerDefaultsAndRoundTrip) {
+    // Phase 23 (contracts §1): the learned-ranking surface is inert by default (byte-identical,
+    // D17) and every new key round-trips through to_json/from_json.
+    const ExperimentConfig d{};
+    EXPECT_FALSE(d.learningV2.learnedRanker);
+    EXPECT_DOUBLE_EQ(d.learningV2.retrainEveryHours, 24.0);
+    EXPECT_EQ(d.learningV2.minTrainingRows, 5000u);
+    EXPECT_EQ(d.learningV2.retrainEpochs, 50u);
+    // The six §4.21 default value weights (contracts §1).
+    EXPECT_DOUBLE_EQ(d.learningV2.valueWeights.watch, 0.30);
+    EXPECT_DOUBLE_EQ(d.learningV2.valueWeights.share, 0.15);
+    EXPECT_DOUBLE_EQ(d.learningV2.valueWeights.follow, 0.10);
+    EXPECT_DOUBLE_EQ(d.learningV2.valueWeights.satisfaction, 0.30);
+    EXPECT_DOUBLE_EQ(d.learningV2.valueWeights.exit, 0.10);
+    EXPECT_DOUBLE_EQ(d.learningV2.valueWeights.regret, 0.05);
+
+    json ok = {
+        {"simulation", {{"scheduler", "event_queue"}, {"horizon_seconds", 86400.0}}},
+        {"realism", {{"content_v2", true}, {"latent_reactions", true}, {"session_dynamics", true}}},
+        {"algorithm", "hnsw_learned_ranker"},
+        {"learning_v2",
+         {{"training_log", true},
+          {"learned_ranker", true},
+          {"retrain_every_hours", 6.0},
+          {"min_training_rows", 1234},
+          {"retrain_epochs", 40},
+          {"value_weights",
+           {{"watch", 0.42},
+            {"share", 0.15},
+            {"follow", 0.10},
+            {"satisfaction", 0.18},
+            {"exit", 0.10},
+            {"regret", 0.05}}}}}};
+    const auto c = ok.get<ExperimentConfig>();
+    EXPECT_EQ(c.algorithm, RecommendationAlgorithm::HnswLearnedRanker);
+    EXPECT_TRUE(c.learningV2.learnedRanker);
+    EXPECT_DOUBLE_EQ(c.learningV2.retrainEveryHours, 6.0);
+    EXPECT_EQ(c.learningV2.minTrainingRows, 1234u);
+    EXPECT_EQ(c.learningV2.retrainEpochs, 40u);
+    EXPECT_DOUBLE_EQ(c.learningV2.valueWeights.watch, 0.42);
+    EXPECT_DOUBLE_EQ(c.learningV2.valueWeights.satisfaction, 0.18);
+    // Round-trips unchanged, and the algorithm string is canonical.
+    const json out = c;
+    EXPECT_EQ(out.get<ExperimentConfig>(), c);
+    EXPECT_EQ(out["algorithm"].get<std::string>(), "hnsw_learned_ranker");
+    EXPECT_TRUE(out["learning_v2"]["learned_ranker"].get<bool>());
+}
+
+TEST(ConfigTest, LearnedRankerValidationAndUnknownKeys) {
+    // Phase 23 (contracts §1): learned_ranker requires training_log (which itself requires event
+    // mode); hnsw_learned_ranker requires the learned_ranker gate. Fail-fast (D10).
+    json noLog = {
+        {"simulation", {{"scheduler", "event_queue"}, {"horizon_seconds", 86400.0}}},
+        {"realism", {{"content_v2", true}, {"latent_reactions", true}, {"session_dynamics", true}}},
+        {"learning_v2", {{"learned_ranker", true}}}};
+    try {
+        noLog.get<ExperimentConfig>();
+        FAIL() << "expected throw";
+    } catch (const std::invalid_argument &e) {
+        const std::string msg = e.what();
+        EXPECT_NE(msg.find("learned_ranker"), std::string::npos);
+        EXPECT_NE(msg.find("training_log"), std::string::npos);
+    }
+
+    json algoNoGate = {
+        {"simulation", {{"scheduler", "event_queue"}, {"horizon_seconds", 86400.0}}},
+        {"realism", {{"content_v2", true}, {"latent_reactions", true}, {"session_dynamics", true}}},
+        {"algorithm", "hnsw_learned_ranker"},
+        {"learning_v2", {{"training_log", true}}}}; // learned_ranker still false
+    try {
+        algoNoGate.get<ExperimentConfig>();
+        FAIL() << "expected throw";
+    } catch (const std::invalid_argument &e) {
+        const std::string msg = e.what();
+        EXPECT_NE(msg.find("hnsw_learned_ranker"), std::string::npos);
+        EXPECT_NE(msg.find("learned_ranker"), std::string::npos);
+    }
+
+    // Unknown keys are rejected in the block and its nested value_weights sub-block.
+    json badKey = {{"learning_v2", {{"retrain_epoch", 10}}}};
+    EXPECT_THROW(badKey.get<ExperimentConfig>(), std::invalid_argument);
+    json badWeight = {{"learning_v2", {{"value_weights", {{"wach", 0.5}}}}}};
+    EXPECT_THROW(badWeight.get<ExperimentConfig>(), std::invalid_argument);
+
+    // The algorithm enum string round-trips both ways.
+    EXPECT_EQ(algorithmFromString("hnsw_learned_ranker"),
+              RecommendationAlgorithm::HnswLearnedRanker);
+    EXPECT_STREQ(toString(RecommendationAlgorithm::HnswLearnedRanker), "hnsw_learned_ranker");
+}
+
 TEST(ConfigTest, ExplorationEnableAtDayAndDescriptionRoundTrip) {
     // Phase 21 (contracts §1/§4): both default to their inert values and round-trip additively.
     EXPECT_DOUBLE_EQ(ExperimentConfig{}.exploration.enableAtDay, -1.0);

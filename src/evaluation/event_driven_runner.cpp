@@ -1,5 +1,7 @@
 #include "rr/evaluation/event_driven_runner.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -37,6 +39,8 @@
 #include "rr/infrastructure/random.hpp"
 #include "rr/learning/online_user_state_updater.hpp"
 #include "rr/learning/tolerance_estimator.hpp"
+#include "rr/learning_v2/hnsw_learned_ranker_recommender.hpp"
+#include "rr/learning_v2/retrainer.hpp"
 #include "rr/learning_v2/training_logger.hpp"
 #include "rr/recommendation/effective_preference.hpp"
 #include "rr/recommendation/feature_extractor.hpp"
@@ -426,14 +430,49 @@ ExperimentResult EventDrivenRunner::run() {
                   config_.learning.recentWindow, config_.ranking.trendingHalfLifeSeconds);
     RecommenderDeps deps{ds.reels, ds.users, config_};
     // Oracle-satisfaction arm reads hidden state, so it is built here under the evaluation
-    // carve-out (D18); everything else goes through the factory — mirrors the legacy special-case
-    // exactly.
-    std::unique_ptr<Recommender> recommender =
-        config_.algorithm == RecommendationAlgorithm::OracleSatisfaction
-            ? std::make_unique<OracleSatisfactionRecommender>(
-                  config_, ds.reels, ds.users, ds.creators, ds.hiddenStates, ds.hiddenReelStates,
-                  forkRng(seed, "recommender"))
-            : makeRecommender(config_.algorithm, deps, forkRng(seed, "recommender"));
+    // carve-out (D18); the Phase 23 learned arm is built here too (it needs the in-loop retrainer +
+    // a live handle to its LearnedRanker for deterministic model hot-swaps, and it lives in
+    // rr_learning_v2 which the factory cannot reach without a library cycle — contracts §7);
+    // everything else goes through the factory — mirrors the legacy special-case exactly.
+    HNSWLearnedRankerRecommender *learnedRec = nullptr; // non-owning; set only on the learned arm
+    std::unique_ptr<Recommender> recommender;
+    if (config_.algorithm == RecommendationAlgorithm::OracleSatisfaction) {
+        recommender = std::make_unique<OracleSatisfactionRecommender>(
+            config_, ds.reels, ds.users, ds.creators, ds.hiddenStates, ds.hiddenReelStates,
+            forkRng(seed, "recommender"));
+    } else if (config_.algorithm == RecommendationAlgorithm::HnswLearnedRanker) {
+        auto owned =
+            std::make_unique<HNSWLearnedRankerRecommender>(deps, forkRng(seed, "recommender"));
+        learnedRec = owned.get();
+        recommender = std::move(owned);
+    } else {
+        recommender = makeRecommender(config_.algorithm, deps, forkRng(seed, "recommender"));
+    }
+
+    // Phase 23 in-loop retraining state (contracts §3). Active ONLY on the learned arm (which
+    // requires training_log, so the trainingLogger + its in-memory matrix exist). The schedule
+    // fires at each retrain_every_hours boundary; the first retrain waits until the matrix reaches
+    // min_training_rows (cold-start fallback until then). The Retrainer forks its learner streams
+    // from `seed` per version, so the model sequence is reproducible (§5).
+    const bool learnedRankerOn = config_.learningV2.learnedRanker;
+    std::optional<learning_v2::Retrainer> retrainer;
+    double retrainIntervalSeconds = 0.0;
+    double nextRetrainTime = 0.0;
+    int retrainVersion = 0;
+    std::vector<RetrainRecord> retrainRecords;
+    // explanation_sample.json capture (deterministic: the FIRST learned-served feed) — collected in
+    // locals during the loop, folded into result.learnedModels at assembly.
+    bool explanationCaptured = false;
+    std::uint64_t explanationRequestId = 0;
+    std::uint32_t explanationUserId = 0;
+    std::uint64_t explanationSimTime = 0;
+    int explanationVersion = 0;
+    std::vector<ExplanationSampleCandidate> explanationCandidates;
+    if (learnedRankerOn) {
+        retrainer.emplace(seed, config_.learningV2.retrainEpochs);
+        retrainIntervalSeconds = config_.learningV2.retrainEveryHours * 3600.0;
+        nextRetrainTime = retrainIntervalSeconds; // first boundary since run start
+    }
     Rng oracleRng = forkRng(seed, "oracle");
     Rng retrievalRng = forkRng(seed, "retrieval");
     Rng schedulingRng = forkRng(seed, "scheduling"); // NEW (D19): open/return draws only.
@@ -749,6 +788,38 @@ ExperimentResult EventDrivenRunner::run() {
             // so this move is byte-identical (only reads are the stamp below and result assembly).
             ++requestCount;
 
+            // P23-HOOK(retrain) — contracts §3. Deterministic in-loop retraining. At the FIRST
+            // RequestFeed at/after each retrain_every_hours boundary, advance the schedule past the
+            // current simulated time (collapsing any missed boundaries — the matrix is identical
+            // across them — into one retrain) and, if the in-memory matrix has reached
+            // min_training_rows, retrain all §4.21 targets and hot-swap the fresh models into the
+            // LearnedRanker. The swap happens HERE, BETWEEN requests and BEFORE recommend(), so it
+            // is deterministic and this request is served by the just-swapped models. Wall cost is
+            // steady_clock (D9 — outside simulated time), recorded but excluded from the
+            // determinism guarantee. Inert on every non-learned arm (learnedRec == nullptr).
+            if (learnedRec && static_cast<double>(e.time) >= nextRetrainTime) {
+                nextRetrainTime =
+                    (std::floor(static_cast<double>(e.time) / retrainIntervalSeconds) + 1.0) *
+                    retrainIntervalSeconds;
+                if (trainingLogger->matrixCompleteRows() >= config_.learningV2.minTrainingRows) {
+                    const std::vector<learning_v2::ShownFeatureRow> rows =
+                        trainingLogger->snapshotMatrix();
+                    ++retrainVersion;
+                    const auto retrainT0 = std::chrono::steady_clock::now();
+                    learning_v2::LearnedModels bundle = retrainer->retrain(rows, retrainVersion);
+                    const auto retrainT1 = std::chrono::steady_clock::now();
+                    RetrainRecord rec;
+                    rec.version = retrainVersion;
+                    rec.simTimeSeconds = static_cast<std::uint64_t>(e.time);
+                    rec.nTrainRows = rows.size();
+                    rec.wallMs =
+                        std::chrono::duration<double, std::milli>(retrainT1 - retrainT0).count();
+                    rec.targetsTrained = bundle.trainedTargets();
+                    retrainRecords.push_back(std::move(rec));
+                    learnedRec->learnedRanker().setModels(std::move(bundle));
+                }
+            }
+
             RecommendationRequest req{};
             req.userId = user.id;
             req.sessionId = user.recentInteractions.empty()
@@ -848,6 +919,27 @@ ExperimentResult EventDrivenRunner::run() {
                 }
                 trainingLogger->onRequestRanked(requestCount, req, user, effEpsilon, capture,
                                                 resp.reels);
+            }
+
+            // P23 explanation_sample.json capture (contracts §4/§6). The FIRST feed served with
+            // ready learned models (hasModels() flips true only after the first retrain) carries
+            // the §2 learned explanation map on every RankedReel; snapshot it once,
+            // deterministically. The cold-start-fallback feeds before this carry the WeightedRanker
+            // map (+ fallback=1) and are skipped.
+            if (learnedRec && !explanationCaptured && learnedRec->learnedRanker().hasModels() &&
+                !resp.reels.empty()) {
+                explanationCaptured = true;
+                explanationRequestId = requestCount;
+                explanationUserId = user.id.value;
+                explanationSimTime = static_cast<std::uint64_t>(e.time);
+                explanationVersion = learnedRec->learnedRanker().version();
+                for (const RankedReel &ranked : resp.reels) {
+                    ExplanationSampleCandidate ec;
+                    ec.reelId = ranked.reelId.value;
+                    ec.position = ranked.rank;
+                    ec.explanation = ranked.featureContributions;
+                    explanationCandidates.push_back(std::move(ec));
+                }
             }
             // Land the ranked feed in the deque. PRESERVE-DOWNLOADED (V2 §4.13, the default): a
             // threshold refill APPENDS behind whatever survives, so already-downloaded reels are
@@ -1069,9 +1161,16 @@ ExperimentResult EventDrivenRunner::run() {
             // Called for every impression so the draw count stays impression-aligned; a row is
             // written only when the sample draw fires.
             if (surveyWriter) {
-                surveyWriter->maybeSurvey(user.id, step.event.reelId, step.event.requestId,
-                                          step.event.timestamp, latent.immediateSatisfaction,
-                                          *explicitFeedbackRng);
+                const std::optional<int> likert = surveyWriter->maybeSurvey(
+                    user.id, step.event.reelId, step.event.requestId, step.event.timestamp,
+                    latent.immediateSatisfaction, *explicitFeedbackRng);
+                // Phase 23 (contracts §2/§3): join the OBSERVABLE survey likert to the
+                // LearnedRanker's in-memory matrix (onSurvey no-ops unless the learned-ranker
+                // matrix is kept; the hidden immediateSatisfaction never crosses into the
+                // NON-carve-out logger, D18).
+                if (likert && trainingLogger) {
+                    trainingLogger->onSurvey(step.event.requestId, step.event.reelId, *likert);
+                }
             }
 
             // LOG-ONLY facets: FinishReel then Interaction at the SAME timestamp, sharing this
@@ -1857,6 +1956,45 @@ ExperimentResult EventDrivenRunner::run() {
         eco.nicheInCohortMatchRateWholeRun =
             totalNiche > 0 ? static_cast<double>(totalNicheMatch) / static_cast<double>(totalNiche)
                            : 0.0;
+    }
+
+    // Phase 23 (contracts §3/§4): fold the learned-ranking report (retraining_log.csv rows +
+    // learned_models summary keys + the explanation sample). Only on the learned arm; otherwise
+    // configured stays false and no learned files/block are written (byte-identical, D17).
+    if (learnedRankerOn) {
+        LearnedModelsReport &lm = result.learnedModels;
+        lm.configured = true;
+        lm.retrainCount = retrainVersion;
+        lm.finalVersion = learnedRec->learnedRanker().version();
+        double wallSum = 0.0;
+        std::size_t rowsSum = 0;
+        for (const RetrainRecord &r : retrainRecords) {
+            wallSum += r.wallMs;
+            rowsSum += r.nTrainRows;
+        }
+        lm.totalRetrainWallMs = wallSum;
+        lm.meanNTrainRows = retrainRecords.empty() ? 0.0
+                                                   : static_cast<double>(rowsSum) /
+                                                         static_cast<double>(retrainRecords.size());
+        const learning_v2::LearnedRanker &lr = learnedRec->learnedRanker();
+        lm.fallbackRequestShare = lr.rankCalls() == 0 ? 0.0
+                                                      : static_cast<double>(lr.fallbackCalls()) /
+                                                            static_cast<double>(lr.rankCalls());
+        lm.finalModelJson = lr.models().toJson().dump(2);
+        lm.note =
+            retrainVersion == 0
+                ? "no retrain reached min_training_rows; served the cold-start WeightedRanker "
+                  "fallback for the whole run"
+                : "in-loop LearnedRanker: §4.21 multi-objective value from the P22 models, "
+                  "retrained every retrain_every_hours on the in-run log; fallback share is "
+                  "the cold-start (pre-first-retrain) request fraction";
+        lm.retrains = std::move(retrainRecords);
+        lm.explanationCaptured = explanationCaptured;
+        lm.explanationRequestId = explanationRequestId;
+        lm.explanationUserId = explanationUserId;
+        lm.explanationSimTimeSeconds = explanationSimTime;
+        lm.explanationVersion = explanationVersion;
+        lm.explanationCandidates = std::move(explanationCandidates);
     }
 
     // 9. Write the §26 output layout (ResultsWriter emits the event_mode block only when

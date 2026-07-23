@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 
 #include "rr/domain/ids.hpp"
 #include "rr/infrastructure/clock.hpp"
@@ -40,8 +41,13 @@ class SurveyWriter {
 
     // P22-HOOK(outcome) sink: called once per SHOWN impression (see the two-draw contract above).
     // Draws twice on `explicitFeedback`, and — iff draw (1) fires — appends one survey.csv row.
-    void maybeSurvey(UserId userId, ReelId reelId, std::uint64_t requestId, Timestamp timestamp,
-                     float immediateSatisfaction, Rng &explicitFeedback);
+    // Phase 23: RETURNS the observable likert (1..5) when the impression was surveyed, else
+    // nullopt, so the event runner can join it to the LearnedRanker's in-memory training matrix
+    // (the likert is observable explicit feedback; the CSV row and the two-draw stream contract are
+    // unchanged).
+    std::optional<int> maybeSurvey(UserId userId, ReelId reelId, std::uint64_t requestId,
+                                   Timestamp timestamp, float immediateSatisfaction,
+                                   Rng &explicitFeedback);
 
     // P22-HOOK(finish) sink: flush survey.csv at run end. Ensures the file exists (header-only if
     // no impression was surveyed) so the schema.json-declared table is always present.

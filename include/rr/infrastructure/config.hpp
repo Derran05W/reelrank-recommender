@@ -460,6 +460,24 @@ struct LearningV2SurveyConfig {
     bool operator==(const LearningV2SurveyConfig &) const = default;
 };
 
+// Phase 23 multi-objective value-function weights (V2 TDD §4.21, contracts §1). The learned value
+// is  watch·pWatch + share·pShare + follow·pFollow + satisfaction·pSatisfaction − exit·pExit −
+// regret·pRegret  (the six §4.21 terms; exit/regret enter negatively). Defaults are the balanced
+// operating point (contracts §1); the frontier-sweep experiment arms vary watch/satisfaction
+// against each other (renormalized) to expose the engagement↔welfare trade-off. `follow` stays
+// small: P22 measured no learnable signal for the ~1.5%-base-rate follow target, so its predictor
+// contributes little (finding cited at the default). Consumed only under
+// learning_v2.learned_ranker.
+struct LearningV2ValueWeights {
+    double watch = 0.30;
+    double share = 0.15;
+    double follow = 0.10;
+    double satisfaction = 0.30;
+    double exit = 0.10;
+    double regret = 0.05;
+    bool operator==(const LearningV2ValueWeights &) const = default;
+};
+
 // Tier-5 learned-ranking pipeline gates (V2 TDD 4.19/4.22, Phase 22, contracts §1). All defaults
 // preserve current behaviour: the whole block is inert until training_log (or survey.enabled) is
 // turned on, and BOTH require the event runner (P22 logs the event-driven world only, V2 §9).
@@ -478,6 +496,24 @@ struct LearningV2Config {
     // Rotation threshold for candidates/outcomes part files (`-partNNNN.csv`).
     uint64_t logMaxRowsPerFile = 2000000;
     LearningV2SurveyConfig survey;
+
+    // --- Phase 23 in-loop learned ranking (V2 TDD §4.21, contracts §1) ------------------------
+    // Master gate for serving the LearnedRanker (the §4.21 multi-objective value from the P22
+    // models, retrained in-loop). Load-validation: requires trainingLog (the ranker trains on the
+    // in-run log) — hence transitively event mode. Off by default => byte-identical (D17).
+    bool learnedRanker = false;
+    // The six §4.21 value-function weights (above).
+    LearningV2ValueWeights valueWeights;
+    // Simulated hours between in-loop retrains (deterministic schedule; the runner retrains at each
+    // crossed boundary once the matrix reaches min_training_rows).
+    double retrainEveryHours = 24.0;
+    // Cold-start threshold: while the in-memory training matrix holds fewer than this many joined
+    // shown rows, the LearnedRanker serves the hand-tuned WeightedRanker scores (fallback=1 in the
+    // explanation). The first retrain at/after a boundary once the matrix crosses it swaps in
+    // models.
+    uint32_t minTrainingRows = 5000;
+    // In-loop SGD epochs per retrain (the offline apps/train_models default 200 is unchanged).
+    uint32_t retrainEpochs = 50;
     bool operator==(const LearningV2Config &) const = default;
 };
 
@@ -514,6 +550,13 @@ enum class RecommendationAlgorithm {
     HnswRankerDiversity,
     HnswRankerExploration,
     OracleSatisfaction,
+    // Phase 23 (contracts §1): the hnsw_ranker pipeline with the LearnedRanker in place of the
+    // WeightedRanker (same sources; diversity off by default, as hnsw_ranker). Requires the
+    // learning_v2.learned_ranker gate (validated at config load). Constructed by the EVENT RUNNER
+    // (it needs the in-loop retrainer + a live handle to the ranker for model hot-swaps); the
+    // recommendation-side factory REJECTS it, mirroring the OracleSatisfaction event-only
+    // precedent.
+    HnswLearnedRanker,
 };
 
 struct ExperimentConfig {
@@ -589,6 +632,8 @@ void to_json(nlohmann::json &j, const RetentionConfig &c);
 void from_json(const nlohmann::json &j, RetentionConfig &c);
 void to_json(nlohmann::json &j, const LearningV2SurveyConfig &c);
 void from_json(const nlohmann::json &j, LearningV2SurveyConfig &c);
+void to_json(nlohmann::json &j, const LearningV2ValueWeights &c);
+void from_json(const nlohmann::json &j, LearningV2ValueWeights &c);
 void to_json(nlohmann::json &j, const LearningV2Config &c);
 void from_json(const nlohmann::json &j, LearningV2Config &c);
 void to_json(nlohmann::json &j, const RecommendationAlgorithm &a);

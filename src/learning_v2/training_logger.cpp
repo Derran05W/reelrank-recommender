@@ -101,6 +101,22 @@ std::string partFileName(const std::string &base, std::uint32_t index) {
     return oss.str();
 }
 
+// Flatten the 21 FeatureVector fields into the in-memory matrix row, in the SAME kFeatureColumns
+// DECLARATION order writeFeatures() below emits and learned_ranker.cpp's featuresToRow() consumes —
+// the frozen serving-purity ordering (contracts §2/§3). Kept adjacent to writeFeatures so the two
+// can never drift.
+std::array<float, learning_v2::kNumFeatures> featuresToArray(const FeatureVector &f) {
+    return {
+        f.similarity,         f.sessionTopic,    f.quality,
+        f.freshness,          f.popularity,      f.trending,
+        f.creatorAffinity,    f.exploration,     f.durationMatch,
+        f.repetition,         f.impressionCount, f.visualMatch,
+        f.musicMatch,         f.emotionalMatch,  f.clickbait,
+        f.emotionalIntensity, f.usefulness,      f.productionQuality,
+        f.informationDensity, f.languageMatch,   f.savePopularity,
+    };
+}
+
 // Stream the 21 FeatureVector fields in kFeatureColumns DECLARATION ORDER (schema-authoritative).
 void writeFeatures(std::ofstream &out, const FeatureVector &f) {
     out << ',' << num(f.similarity) << ',' << num(f.sessionTopic) << ',' << num(f.quality) << ','
@@ -116,7 +132,8 @@ void writeFeatures(std::ofstream &out, const FeatureVector &f) {
 } // namespace
 
 TrainingLogger::TrainingLogger(const LearningV2Config &config, std::filesystem::path runDir)
-    : config_(config), trainingLogDir_(std::move(runDir) / "training_log") {}
+    : config_(config), trainingLogDir_(std::move(runDir) / "training_log"),
+      keepMatrix_(config.learnedRanker) {}
 
 void TrainingLogger::ensureDir() { std::filesystem::create_directories(trainingLogDir_); }
 
@@ -192,6 +209,17 @@ void TrainingLogger::onRequestRanked(std::uint64_t requestId, const Recommendati
         }
         const long position = isShown ? static_cast<long>(it->second) : -1L;
 
+        // Phase 23 (contracts §3): stash the served features for a SHOWN candidate of a
+        // SHOWN-sampled request into the in-memory matrix, keyed (request_id, reel_id). Only
+        // shown-sampled rows are matrixed — those are exactly the ones whose outcomes arrive at
+        // onImpressionOutcome (same pinned predicate), so the join is complete. No-op unless the
+        // learned-ranker matrix is kept.
+        if (keepMatrix_ && shownSel && isShown) {
+            learning_v2::ShownFeatureRow &m = matrix_[{requestId, row.reelId.value}];
+            m.features = featuresToArray(row.features);
+            m.hasFeatures = true;
+        }
+
         if (!candidatesOpened_) {
             openCandidatesPart(0);
         } else if (candidatesRowsInPart_ >= config_.logMaxRowsPerFile) {
@@ -216,6 +244,30 @@ void TrainingLogger::onImpressionOutcome(const InteractionEvent &event,
                                         config_.logSampleRate)) {
         return; // outcomes join to SHOWN-sampled impressions only.
     }
+
+    // Phase 23 (contracts §3): join the observable outcome labels to the matrix row whose features
+    // were captured at ranking. The SIX §4.21 targets only: watch_ratio + shared/followed/
+    // not_interested (from `outcome`, the event's single `type` being lossy) + session_exit (=
+    // event.observedExitAfterImpression). find() (not operator[]) so an unmatched outcome — a shown
+    // impression whose features weren't captured, which does not happen for a shown-sampled request
+    // — creates no feature-less row. The first outcome flips hasOutcome and counts the row as
+    // trainable.
+    if (keepMatrix_) {
+        auto mit = matrix_.find({event.requestId, event.reelId.value});
+        if (mit != matrix_.end()) {
+            learning_v2::ShownFeatureRow &m = mit->second;
+            m.watchRatio = static_cast<float>(event.watchRatio);
+            m.shared = outcome.shared ? 1 : 0;
+            m.followed = outcome.followed ? 1 : 0;
+            m.notInterested = outcome.notInterested ? 1 : 0;
+            m.sessionExit = event.observedExitAfterImpression ? 1 : 0;
+            if (m.hasFeatures && !m.hasOutcome) {
+                ++matrixCompleteRows_;
+            }
+            m.hasOutcome = true;
+        }
+    }
+
     if (!outcomesOpened_) {
         openOutcomesPart(0);
     } else if (outcomesRowsInPart_ >= config_.logMaxRowsPerFile) {
@@ -229,6 +281,35 @@ void TrainingLogger::onImpressionOutcome(const InteractionEvent &event,
                  << (event.saved ? 1 : 0) << ',' << (event.profileVisited ? 1 : 0) << ','
                  << (event.observedExitAfterImpression ? 1 : 0) << '\n';
     ++outcomesRowsInPart_;
+}
+
+// Phase 23 (contracts §2/§3). Join the OBSERVABLE survey likert to its matrix row. The likert is an
+// observable explicit-feedback label (the recommender-visible survey response); the hidden
+// immediateSatisfaction it was derived from never reaches this NON-carve-out module (D18). No-op
+// unless the matrix is kept and the row exists (features captured at ranking).
+void TrainingLogger::onSurvey(std::uint64_t requestId, ReelId reelId, int likert) {
+    if (!keepMatrix_) {
+        return;
+    }
+    auto mit = matrix_.find({requestId, reelId.value});
+    if (mit != matrix_.end()) {
+        mit->second.likert = static_cast<std::uint8_t>(likert);
+    }
+}
+
+// Phase 23 (contracts §3). Snapshot the TRAINABLE rows (features captured AND outcome joined) in
+// the map's canonical (request_id, reel_id) order — std::map iteration is ordered, so this is
+// hash-map-order-independent and bit-reproducible across platforms (the retraining-determinism
+// contract, §5). Called only at retrain boundaries.
+std::vector<learning_v2::ShownFeatureRow> TrainingLogger::snapshotMatrix() const {
+    std::vector<learning_v2::ShownFeatureRow> rows;
+    rows.reserve(matrixCompleteRows_);
+    for (const auto &[key, row] : matrix_) {
+        if (row.hasFeatures && row.hasOutcome) {
+            rows.push_back(row);
+        }
+    }
+    return rows;
 }
 
 // P22-HOOK(finish). Flush/close the streams, ensure every §2 table exists (header-only when a run

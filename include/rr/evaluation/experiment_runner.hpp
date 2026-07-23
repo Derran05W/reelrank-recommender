@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "rr/evaluation/metrics_collector.hpp"
@@ -367,6 +368,56 @@ struct EcosystemReport {
     std::vector<EcosystemDayPoint> byDay; // ecosystem_metrics.csv rows (one per simulated day)
 };
 
+// Phase 23 learned-ranking report (contracts §3/§4, D22 additive). FROZEN SCHEMA: package C
+// consumes these keys. `configured` is false unless learning_v2.learned_ranker is on (event mode),
+// in which case NO retraining_log.csv, NO explanation_sample.json, and NO `learned_models` summary
+// block are written and the run is byte-identical to a gate-off run (D17). Filled by the event
+// runner.
+
+// One retraining_log.csv row (contracts §3, frozen header
+// version,sim_time_seconds,n_train_rows,wall_ms,targets_trained). `wallMs` is steady_clock (D9 —
+// outside simulated time), so it is the ONE non-deterministic field and is excluded from the §5
+// determinism comparison (like latency_metrics.csv); every other column is bit-reproducible.
+struct RetrainRecord {
+    int version = 0;
+    std::uint64_t simTimeSeconds = 0; // the triggering RequestFeed's simulated time
+    std::size_t nTrainRows = 0;       // complete rows the version trained on
+    double wallMs = 0.0;              // steady_clock retrain cost (NOT part of determinism)
+    std::string targetsTrained;       // pipe-delimited trained targets (absent targets omitted)
+};
+
+// One served candidate's explanation for explanation_sample.json (contracts §4/§6). The map is the
+// LearnedRanker's §2 featureContributions (predicted_* weighted terms + learned_value + fallback +
+// satisfaction_available). Captured from the FIRST learned-served feed after the models go ready.
+struct ExplanationSampleCandidate {
+    std::uint32_t reelId = 0;
+    std::size_t position = 0; // feed slot
+    std::unordered_map<std::string, float> explanation;
+};
+
+struct LearnedModelsReport {
+    bool configured = false;
+    int retrainCount = 0;              // number of actual retrains (== final version)
+    int finalVersion = 0;              // last served model version (0 if never retrained)
+    double totalRetrainWallMs = 0.0;   // Σ wall_ms (timing; not deterministic)
+    double meanNTrainRows = 0.0;       // mean n_train_rows over retrains
+    double fallbackRequestShare = 0.0; // share of feed requests served by the cold-start fallback
+    std::string note;
+    std::vector<RetrainRecord> retrains; // retraining_log.csv rows (in version order)
+
+    // Final model bundle JSON dump — the retraining-determinism test compares this bit-for-bit
+    // across two same-seed runs (contracts §5). In-memory only (not written to disk).
+    std::string finalModelJson;
+
+    // explanation_sample.json payload (deterministic: the first learned-served feed).
+    bool explanationCaptured = false;
+    std::uint64_t explanationRequestId = 0;
+    std::uint32_t explanationUserId = 0;
+    std::uint64_t explanationSimTimeSeconds = 0;
+    int explanationVersion = 0;
+    std::vector<ExplanationSampleCandidate> explanationCandidates;
+};
+
 // Everything one experiment produced, in memory. The ResultsWriter serializes it to disk; the
 // simulate CLI prints headline lines from it. `directory` is the created <experiment-id> dir.
 struct ExperimentResult {
@@ -480,6 +531,13 @@ struct ExperimentResult {
     // (D17). The event runner fills it from the D18 evaluation carve-out; the scenario packages
     // consume the frozen keys. See EcosystemReport.
     EcosystemReport ecosystem;
+
+    // Phase 23 learned-ranking report (contracts §3/§4, D22 additive). `configured` is false unless
+    // learning_v2.learned_ranker is on (event mode), in which case no retraining_log.csv /
+    // explanation_sample.json / `learned_models` block is written and the run is byte-identical to
+    // a gate-off run (D17). Filled by the event runner from the LearnedRanker + Retrainer. See
+    // LearnedModelsReport.
+    LearnedModelsReport learnedModels;
 };
 
 // Runs the end-to-end evaluation loop (TDD 20 + phase-4 task 4, phase-7 tasks 1/4) from a

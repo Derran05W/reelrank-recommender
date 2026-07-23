@@ -1,0 +1,9 @@
+version,sim_time_seconds,n_train_rows,wall_ms,targets_trained
+1,86402,38343,660.861958,watch_ratio|shared|followed|session_exit|not_interested
+2,172802,55871,1133.228459,watch_ratio|shared|followed|session_exit|not_interested
+3,259204,68964,1537.024584,watch_ratio|shared|followed|session_exit|not_interested
+4,345609,81634,1891.413666,watch_ratio|shared|followed|session_exit|not_interested
+5,432024,94033,2329.021917,watch_ratio|shared|followed|session_exit|not_interested
+6,518401,106260,2294.735917,watch_ratio|shared|followed|session_exit|not_interested
+7,604801,118780,2557.545333,watch_ratio|shared|followed|session_exit|not_interested
+8,691206,130303,2839.884958,watch_ratio|shared|followed|session_exit|not_interested

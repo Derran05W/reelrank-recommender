@@ -661,6 +661,22 @@ void ResultsWriter::writeSummaryJson(const ExperimentResult &result) {
             {"note", kEcosystemNote}};
     }
 
+    // Learned-models block (Phase 23, contracts §3/§4, D22 additive): PRESENT only when
+    // learning_v2.learned_ranker is on (event mode), so a gate-off run's summary.json carries no
+    // `learned_models` key (byte-identical, D17). Frozen keys. total_retrain_wall_ms is wall-clock
+    // (D9) — a timing field, not part of the determinism guarantee. Appended after ecosystem so
+    // nothing shifts.
+    if (result.learnedModels.configured) {
+        const LearnedModelsReport &lm = result.learnedModels;
+        j["learned_models"] = {{"configured", true},
+                               {"retrain_count", lm.retrainCount},
+                               {"final_version", lm.finalVersion},
+                               {"total_retrain_wall_ms", lm.totalRetrainWallMs},
+                               {"mean_n_train_rows", lm.meanNTrainRows},
+                               {"fallback_request_share", lm.fallbackRequestShare},
+                               {"note", lm.note}};
+    }
+
     j["notes"] = {{"learning", result.learningEnabled ? kLearningEnabledNote : kLearningFrozenNote},
                   {"baseline_flags", kBaselineFlagsNote}};
 
@@ -962,6 +978,53 @@ void ResultsWriter::writeHiddenPreferenceFinalCsv(
     }
 }
 
+void ResultsWriter::writeRetrainingLogCsv(const ExperimentResult &result) {
+    // Phase 23 (contracts §3): one row per in-loop retrain. FROZEN header. wall_ms is steady_clock
+    // (D9) — the only non-deterministic column; every other column is byte-reproducible across
+    // same-seed runs (the retraining-determinism test compares all-but-wall_ms). Empty
+    // (header-only) when the run never reached min_training_rows.
+    std::ofstream csv(result.directory / "retraining_log.csv");
+    csv << "version,sim_time_seconds,n_train_rows,wall_ms,targets_trained\n";
+    for (const RetrainRecord &r : result.learnedModels.retrains) {
+        csv << r.version << ',' << r.simTimeSeconds << ',' << r.nTrainRows << ',' << num(r.wallMs)
+            << ',' << r.targetsTrained << '\n';
+    }
+}
+
+void ResultsWriter::writeExplanationSampleJson(const ExperimentResult &result) {
+    // Phase 23 (contracts §4/§6): a handful of served candidates' explanation maps from the FIRST
+    // learned-served feed (deterministic), for package C to render. The schema is self-describing —
+    // `schema`/`note` document the layout inline. `candidates` is empty (with captured=false) if
+    // the run never left the cold-start fallback (models never went ready).
+    const LearnedModelsReport &lm = result.learnedModels;
+    nlohmann::json j;
+    j["schema"] = "phase23_explanation_sample_v1";
+    j["note"] =
+        "Served candidates from the FIRST learned-served feed after the in-loop models went "
+        "ready. Each candidate's `explanation` is the LearnedRanker featureContributions "
+        "map: predicted_watch/share/follow/satisfaction/exit/regret are the WEIGHTED value "
+        "terms (exit/regret negative); learned_value is their sum (== rankingScore); "
+        "fallback is 0 for learned-served rows; satisfaction_available is 1 iff a survey "
+        "satisfaction model was trained. reel_id + position give the served feed slot.";
+    j["captured"] = lm.explanationCaptured;
+    j["request_id"] = lm.explanationRequestId;
+    j["user_id"] = lm.explanationUserId;
+    j["sim_time_seconds"] = lm.explanationSimTimeSeconds;
+    j["model_version"] = lm.explanationVersion;
+    nlohmann::json cands = nlohmann::json::array();
+    for (const ExplanationSampleCandidate &c : lm.explanationCandidates) {
+        nlohmann::json expl = nlohmann::json::object();
+        for (const auto &[k, v] : c.explanation) {
+            expl[k] = v;
+        }
+        cands.push_back({{"reel_id", c.reelId}, {"position", c.position}, {"explanation", expl}});
+    }
+    j["candidates"] = std::move(cands);
+
+    std::ofstream out(result.directory / "explanation_sample.json");
+    out << j.dump(2) << '\n';
+}
+
 void ResultsWriter::writeAll(const ExperimentResult &result, const RunMetadata &meta) {
     writeConfigJson(result);
     writeSummaryJson(result);
@@ -1009,6 +1072,13 @@ void ResultsWriter::writeAll(const ExperimentResult &result, const RunMetadata &
     // EXISTING file is byte-identical (D17).
     if (result.ecosystem.configured) {
         writeEcosystemMetricsCsv(result);
+    }
+    // Phase 23 learned-ranking files (contracts §3/§4): written ONLY under
+    // learning_v2.learned_ranker (event mode), so a gate-off run's output directory carries no
+    // retraining_log.csv / explanation_sample.json and every EXISTING file is byte-identical (D17).
+    if (result.learnedModels.configured) {
+        writeRetrainingLogCsv(result);
+        writeExplanationSampleJson(result);
     }
     writeMetadataJson(result.directory, meta);
 }

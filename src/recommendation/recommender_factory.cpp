@@ -63,6 +63,16 @@ std::unique_ptr<Recommender> makeRecommender(RecommendationAlgorithm algorithm,
         // structurally unable to serve it as a policy.
         throw std::invalid_argument("makeRecommender: oracle_satisfaction is evaluation-only "
                                     "(constructed by the ExperimentRunner, never the factory)");
+    case RecommendationAlgorithm::HnswLearnedRanker:
+        // Phase 23: the learned-ranking arm needs the in-loop retrainer + a live handle to its
+        // LearnedRanker for deterministic model hot-swaps, and it lives in rr_learning_v2 (which
+        // depends on this recommendation layer). The EVENT RUNNER constructs it directly (mirroring
+        // the OracleSatisfaction event-only precedent); rejecting it here keeps rr_recommend free
+        // of any rr_learning_v2 dependency (no library cycle) and prevents a modelless learned
+        // policy.
+        throw std::invalid_argument("makeRecommender: hnsw_learned_ranker is constructed by the "
+                                    "EventDrivenRunner (it wires the in-loop retrainer), never the "
+                                    "factory");
     }
     throw std::invalid_argument("makeRecommender: unknown RecommendationAlgorithm value");
 }

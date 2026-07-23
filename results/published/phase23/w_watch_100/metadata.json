@@ -1,0 +1,40 @@
+{
+  "experiment_id": "hnsw_learned_ranker-seed42-20260723T192550",
+  "generated_at": "2026-07-23T19:32:33",
+  "tool": "simulate (ReelRank Phase 4 evaluation harness)",
+  "git": {
+    "reel_rank_sha": "0de6f9a763f4890abb2d8c641b483642603ef0dd",
+    "reel_rank_dir": "/Users/derranw/reel-rank",
+    "reel_rank_dirty": true,
+    "vector_db_sha": "17e434a3e741f702ffb8e0f00b0484676d988198",
+    "vector_db_dir": "/Users/derranw/vector-db"
+  },
+  "build": {
+    "type": "Release",
+    "compiler": "AppleClang 21.0.0.21000101",
+    "cxx_standard": 20
+  },
+  "hardware": {
+    "cpu_model": "Apple M5",
+    "logical_cores": 10,
+    "physical_cores": 10,
+    "ram_bytes": 25769803776
+  },
+  "os": {
+    "sysname": "Darwin",
+    "release": "25.5.0",
+    "version": "Darwin Kernel Version 25.5.0: Mon Apr 27 20:39:29 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8142",
+    "machine": "arm64"
+  },
+  "execution": {
+    "threads_used": 1,
+    "note": "single-threaded simulation core (D13)"
+  },
+  "dataset": {
+    "users": 10000,
+    "reels": 100000,
+    "creators": 5000,
+    "topics": 32,
+    "dimensions": 64
+  }
+}
